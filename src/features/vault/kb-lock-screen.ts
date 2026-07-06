@@ -1,25 +1,28 @@
 import { css, html, LitElement, nothing } from 'lit';
 
 /**
- * Lock screen (US-1): create-vault and unlock forms. Emits `vault-create` /
- * `vault-unlock` with the password; never stores it anywhere itself.
+ * Lock screen (US-1): create-vault, unlock, and join-from-remote forms. Emits
+ * `vault-create` / `vault-unlock` / `vault-join`; never stores the password.
  */
 export class KbLockScreen extends LitElement {
   static override properties = {
     mode: { type: String },
     error: { type: String },
     busy: { type: Boolean },
+    joining: { type: Boolean, state: true },
   };
 
   declare mode: 'create' | 'unlock';
   declare error: string;
   declare busy: boolean;
+  declare joining: boolean;
 
   constructor() {
     super();
     this.mode = 'unlock';
     this.error = '';
     this.busy = false;
+    this.joining = false;
   }
 
   static override styles = css`
@@ -83,6 +86,13 @@ export class KbLockScreen extends LitElement {
       opacity: 0.6;
       cursor: progress;
     }
+    button.link {
+      background: none;
+      color: var(--color-accent-strong);
+      font-size: 0.85rem;
+      text-decoration: underline;
+      padding: 0;
+    }
     [role='alert'] {
       color: var(--color-danger);
       font-size: 0.9rem;
@@ -96,6 +106,21 @@ export class KbLockScreen extends LitElement {
     const data = new FormData(event.currentTarget instanceof HTMLFormElement ? event.currentTarget : undefined);
     const password = String(data.get('password') ?? '');
     const confirm = String(data.get('confirm') ?? '');
+    if (this.joining) {
+      this.dispatchEvent(
+        new CustomEvent('vault-join', {
+          detail: {
+            password,
+            settings: {
+              url: String(data.get('url') ?? '').trim(),
+              token: String(data.get('token') ?? '').trim(),
+              corsProxy: String(data.get('proxy') ?? '').trim(),
+            },
+          },
+        }),
+      );
+      return;
+    }
     switch (this.mode) {
       case 'create': {
         if (password.length < 8) {
@@ -115,11 +140,34 @@ export class KbLockScreen extends LitElement {
     }
   }
 
+  private renderJoinFields(): unknown {
+    return html`
+      <label>
+        Repository URL
+        <input name="url" type="url" required placeholder="https://github.com/you/vault.git" />
+      </label>
+      <label>
+        Access token
+        <input name="token" type="password" autocomplete="off" required />
+      </label>
+      <label>
+        CORS proxy
+        <input name="proxy" type="url" value="https://cors.isomorphic-git.org" />
+      </label>
+    `;
+  }
+
   protected override render(): unknown {
-    const creating = this.mode === 'create';
+    const creating = this.mode === 'create' && !this.joining;
+    const heading = this.joining
+      ? 'Connect an existing vault'
+      : creating
+        ? 'Create your vault'
+        : 'Unlock your vault';
     return html`
       <form @submit=${this.submit} aria-busy=${this.busy}>
-        <h1>${creating ? 'Create your vault' : 'Unlock your vault'}</h1>
+        <h1>${heading}</h1>
+        ${this.joining ? this.renderJoinFields() : nothing}
         <p class="hint">
           ${creating
             ? 'All notes are encrypted on this device with a key derived from your master password.'
@@ -149,8 +197,19 @@ export class KbLockScreen extends LitElement {
           : nothing}
         <p role="alert">${this.error}</p>
         <button type="submit" ?disabled=${this.busy}>
-          ${this.busy ? 'Working…' : creating ? 'Create vault' : 'Unlock'}
+          ${this.busy ? 'Working…' : this.joining ? 'Connect' : creating ? 'Create vault' : 'Unlock'}
         </button>
+        ${this.mode === 'create'
+          ? html`<button
+              type="button"
+              class="link"
+              @click=${() => {
+                this.joining = !this.joining;
+              }}
+            >
+              ${this.joining ? 'Create a new vault instead' : 'Connect an existing vault from a git remote'}
+            </button>`
+          : nothing}
       </form>
     `;
   }

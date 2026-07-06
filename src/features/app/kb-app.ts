@@ -9,6 +9,7 @@ import {
   boot,
   createNewVault,
   indexStore,
+  joinExistingVault,
   lock,
   phaseStore,
   queryStore,
@@ -175,6 +176,14 @@ export class KbApp extends LitElement {
     this.busy = false;
   }
 
+  private async handleJoin(
+    event: CustomEvent<{ password: string; settings: SyncSettings }>,
+  ): Promise<void> {
+    this.busy = true;
+    await joinExistingVault(event.detail.settings, event.detail.password);
+    this.busy = false;
+  }
+
   private handleSyncSave(event: CustomEvent<{ settings: SyncSettings; autoLockMinutes: number }>): void {
     setAutoLockMinutes(event.detail.autoLockMinutes);
     void saveSyncSettings(event.detail.settings);
@@ -235,7 +244,9 @@ export class KbApp extends LitElement {
         return html`<kb-lock-screen
           mode="create"
           ?busy=${this.busy}
+          .error=${unlockErrorStore.get() ?? ''}
           @vault-create=${this.handleCreate}
+          @vault-join=${this.handleJoin}
         ></kb-lock-screen>`;
       case 'locked':
         return html`<kb-lock-screen

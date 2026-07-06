@@ -1,8 +1,9 @@
 import { Effect } from 'effect';
 import type { NoteId } from '@core/crdt/noteDoc';
 import { httpRemote } from '@core/git/remote';
+import { initRepo, setMainTo } from '@core/git/repo';
 import { syncVault } from '@core/git/sync';
-import type { StoragePort } from '@core/storage/ports';
+import { persistStorage, type StoragePort } from '@core/storage/ports';
 import { readManifest } from '@core/storage/vaultStore';
 import { buildIndex, emptyIndex, type KnowledgeIndex } from '@features/search/indexes';
 import { readSyncSettings, writeSyncSettings, type SyncSettings } from '@features/sync/syncConfig';
@@ -124,6 +125,47 @@ export const boot = async (): Promise<void> => {
 export const createNewVault = async (password: string): Promise<void> => {
   if (storage === undefined) return;
   await postUnlock(await createVault(storage, password));
+};
+
+/**
+ * Join a vault that already lives on a git remote (second-device flow):
+ * clone it into local storage, then unlock with the shared master password.
+ * The sync settings themselves travel inside the vault, encrypted.
+ */
+export const joinExistingVault = async (settings: SyncSettings, password: string): Promise<void> => {
+  if (storage === undefined) return;
+  const remote = httpRemote(settings);
+  try {
+    await initRepo(storage);
+    const remoteHead = await remote.fetch(storage);
+    if (remoteHead === undefined) {
+      unlockErrorStore.set('That repository is empty — create the vault on your first device and sync it there.');
+      phaseStore.set('no-vault');
+      return;
+    }
+    await setMainTo(storage, remoteHead);
+    await persistStorage(storage);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'could not reach the remote';
+    unlockErrorStore.set(`Connection failed: ${message}`);
+    phaseStore.set('no-vault');
+    return;
+  }
+  const result = await unlockVault(storage, password);
+  switch (result.kind) {
+    case 'ok': {
+      await writeSyncSettings(result.handle, settings);
+      return postUnlock(result.handle);
+    }
+    case 'wrong-password':
+      phaseStore.set('locked');
+      unlockErrorStore.set('Vault downloaded, but the password is wrong. Unlock with the vault password.');
+      return;
+    case 'no-vault':
+      unlockErrorStore.set('The repository does not contain a vault.');
+      phaseStore.set('no-vault');
+      return;
+  }
 };
 
 export const unlock = async (password: string): Promise<void> => {
