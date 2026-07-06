@@ -37,10 +37,16 @@ bun runtime, Playwright for E2E, Cloudflare for hosting the static site.
 
 ### US-1 — Vault lifecycle
 
-> As a user, I want to create a vault protected by a master password and unlock it
-> on later visits, so that only I can read my notes.
+> As a user, I want to create a vault protected by a passkey — falling back to a
+> master password — and unlock it on later visits, so that only I can read my
+> notes without typing a password every time.
 
 Acceptance criteria:
+
+- **AC-1.0** WHERE the platform supports WebAuthn with the PRF extension THE SYSTEM SHALL offer passkey unlock as the primary method; the master password SHALL always exist as the fallback protector, and both SHALL decrypt the same vault key.
+- **AC-1.0a** WHEN the user unlocks with a passkey THE SYSTEM SHALL NOT require the password; IF the passkey ceremony fails or is cancelled THEN THE SYSTEM SHALL leave the vault locked and keep the password form available.
+- **AC-1.0b** IF the platform lacks WebAuthn/PRF support THEN THE SYSTEM SHALL operate password-only with no degradation of other capabilities.
+- **AC-1.0c** WHEN a vault has no passkey enrolled THE SYSTEM SHALL allow enrolling one later from settings, given the master password.
 
 - **AC-1.1** WHEN a first-time user submits a master password (and confirmation) THE SYSTEM SHALL create an empty vault encrypted with a key derived from that password via a memory-hard KDF (Argon2id) and open the workspace.
 - **AC-1.2** WHEN a returning user submits the correct master password THE SYSTEM SHALL unlock the vault and open the workspace.

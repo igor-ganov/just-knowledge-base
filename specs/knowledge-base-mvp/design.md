@@ -88,10 +88,21 @@ Rejected:
 - **AEAD:** AES-256-GCM via WebCrypto with a **non-extractable** `CryptoKey` — the
   browser never exposes raw key bytes to JS after derivation (AC-1.4, AC-9.2).
   96-bit random nonces; at MVP write volumes (≪ 2³² records) random nonces are safe.
-- **Key hierarchy:** master password → Argon2id(salt) → **KEK**; random 256-bit
-  **DEK** generated at vault creation, wrapped by KEK, stored in the manifest.
-  Password change = re-wrap DEK only, no data re-encryption. Wrong password fails
-  DEK unwrap (GCM auth) — one uniform error, AC-1.3.
+- **Key hierarchy (protector model, AC-1.0):** a random 256-bit **DEK** is
+  wrapped independently by one KEK per *protector*; every protector opens the
+  same vault. Protectors:
+  - **Password (always present, fallback):** master password → Argon2id(salt) → KEK.
+  - **Passkey (primary where supported):** WebAuthn credential with the **PRF
+    extension**; `prf.eval(salt)` yields a credential-bound 32-byte secret →
+    HKDF-SHA-256 → KEK. The secret never leaves the authenticator ceremony; the
+    manifest stores only credential id, PRF salt, and the wrapped DEK. Synced
+    passkeys (iCloud/Google) carry the PRF key with them, so passkey unlock
+    works on the user's other devices.
+  Password change or later passkey enrollment = unwrap DEK (transient
+  extractable handle, raw bytes never in JS) → re-wrap under the new KEK; no
+  data re-encryption. Wrong password / failed ceremony fails DEK unwrap (GCM
+  auth) — one uniform error, AC-1.3. No PRF support → password-only (AC-1.0b).
+  E2E-tested with a CDP virtual authenticator (`hasPrf: true`).
 - **Envelope:** every stored record is `nonce ‖ ciphertext ‖ tag` with AAD =
   `(vault-format-version, record-path)` — binds a blob to its location, preventing
   ciphertext swap/replay inside the repo (supports AC-6.5).
