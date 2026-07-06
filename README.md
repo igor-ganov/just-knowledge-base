@@ -49,6 +49,10 @@ substituting native FS/git/keystore adapters behind the existing ports.
 2. In the app: Settings → repository URL + access token (for GitHub, a
    fine-grained PAT with contents read/write on that one repo).
 3. The browser build talks smart-HTTP through a CORS proxy (configurable;
-   ciphertext only). Press **Sync** — the first sync uploads your vault; on
-   other devices, create nothing, just configure the same remote and password
-   and sync.
+   ciphertext only). Press **Sync** — the first sync uploads your vault; on a
+   second device choose **“Connect an existing vault from a git remote”** on
+   the first-run screen and enter the same remote and master password.
+
+## License
+
+[MIT](LICENSE)
