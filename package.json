@@ -1,0 +1,41 @@
+{
+  "name": "just-knowledge-base",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check && tsc --noEmit -p tsconfig.json",
+    "test": "bun test src",
+    "test:e2e": "playwright test",
+    "deploy": "astro build && wrangler pages deploy dist --project-name just-knowledge-base"
+  },
+  "dependencies": {
+    "@codemirror/autocomplete": "^6.18.0",
+    "@codemirror/commands": "^6.8.0",
+    "@codemirror/lang-markdown": "^6.3.0",
+    "@codemirror/language": "^6.11.0",
+    "@codemirror/state": "^6.5.0",
+    "@codemirror/view": "^6.36.0",
+    "@isomorphic-git/lightning-fs": "^4.6.0",
+    "astro": "^5.7.0",
+    "effect": "^3.14.0",
+    "hash-wasm": "^4.12.0",
+    "isomorphic-git": "^1.30.0",
+    "lit": "^3.3.0",
+    "minisearch": "^7.1.0",
+    "y-codemirror.next": "^0.3.5",
+    "yjs": "^13.6.24"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.4",
+    "@playwright/test": "^1.52.0",
+    "@types/bun": "^1.2.0",
+    "@types/node": "^22.0.0",
+    "fast-check": "^4.1.0",
+    "typescript": "^5.8.0",
+    "wrangler": "^4.14.0"
+  }
+}
