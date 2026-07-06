@@ -13,6 +13,12 @@ export type FsPromises = {
   readonly lstat: (path: string) => Promise<unknown>;
   readonly readlink?: (path: string) => Promise<unknown>;
   readonly symlink?: (target: string, path: string) => Promise<unknown>;
+  /** LightningFS: force the debounced superblock to IndexedDB now. */
+  readonly flush?: () => Promise<void>;
+};
+
+export const persistStorage = async (storage: StoragePort): Promise<void> => {
+  await storage.fs.promises.flush?.();
 };
 
 /** Shape isomorphic-git accepts as its `fs` option and we use directly. */

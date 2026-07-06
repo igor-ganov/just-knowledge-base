@@ -11,7 +11,7 @@ import {
 } from '@core/crdt/noteDoc';
 import { createDek, defaultKdfParams, deriveKek, unwrapDek, type KdfParams, type VaultManifest } from '@core/crypto/keys';
 import { commitAll, initRepo } from '@core/git/repo';
-import type { StoragePort } from '@core/storage/ports';
+import { persistStorage, type StoragePort } from '@core/storage/ports';
 import {
   readCatalogBlobs,
   readManifest,
@@ -37,6 +37,15 @@ export type VaultHandle = {
   readonly dirtyNotes: Map<NoteId, Uint8Array[]>;
   readonly dirtyCatalog: Uint8Array[];
   readonly warnings: CorruptBlob[];
+  /** Fired on ANY content change (local edits and disk/sync loads) — UI refresh hook. */
+  readonly listeners: Set<() => void>;
+};
+
+const notifyChange = (handle: VaultHandle): void => handle.listeners.forEach((listener) => listener());
+
+export const onVaultChange = (handle: VaultHandle, listener: () => void): (() => void) => {
+  handle.listeners.add(listener);
+  return () => handle.listeners.delete(listener);
 };
 
 export type UnlockResult =
@@ -47,10 +56,12 @@ export type UnlockResult =
 const trackNoteDoc = (handle: VaultHandle, id: NoteId, doc: Y.Doc): void => {
   handle.notes.set(id, doc);
   doc.on('update', (update: Uint8Array, origin: unknown) => {
-    if (origin === DISK_ORIGIN) return;
-    const pending = handle.dirtyNotes.get(id) ?? [];
-    pending.push(update);
-    handle.dirtyNotes.set(id, pending);
+    if (origin !== DISK_ORIGIN) {
+      const pending = handle.dirtyNotes.get(id) ?? [];
+      pending.push(update);
+      handle.dirtyNotes.set(id, pending);
+    }
+    notifyChange(handle);
   });
 };
 
@@ -63,9 +74,11 @@ const emptyHandle = (storage: StoragePort, dek: CryptoKey): VaultHandle => {
     dirtyNotes: new Map(),
     dirtyCatalog: [],
     warnings: [],
+    listeners: new Set(),
   };
   handle.catalog.on('update', (update: Uint8Array, origin: unknown) => {
     if (origin !== DISK_ORIGIN) handle.dirtyCatalog.push(update);
+    notifyChange(handle);
   });
   return handle;
 };
@@ -86,6 +99,7 @@ export const createVault = async (
   };
   await writeManifest(storage, manifest);
   await commitAll(storage, 'vault: create');
+  await persistStorage(storage);
   return emptyHandle(storage, dek);
 };
 
@@ -160,5 +174,6 @@ export const flushVault = async (handle: VaultHandle, message: string): Promise<
     handle.dirtyCatalog.length = 0;
   }
   await commitAll(handle.storage, message);
+  await persistStorage(handle.storage);
   return true;
 };

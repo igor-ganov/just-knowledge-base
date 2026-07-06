@@ -1,0 +1,30 @@
+---
+import '../ui/tokens.css';
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="just-knowledge-base — a local-first, end-to-end-encrypted personal knowledge base."
+    />
+    <meta name="theme-color" content="#0f6f5c" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <title>just-knowledge-base</title>
+  </head>
+  <body>
+    <kb-app></kb-app>
+    <noscript>This app requires JavaScript: all encryption happens in your browser.</noscript>
+    <script>
+      import '../features/app/kb-app';
+
+      if ('serviceWorker' in navigator && import.meta.env.PROD) {
+        navigator.serviceWorker.register('/sw.js');
+      }
+    </script>
+  </body>
+</html>

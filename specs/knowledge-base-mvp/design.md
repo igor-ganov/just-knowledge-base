@@ -81,9 +81,10 @@ Rejected:
 
 ### 2.3 Cryptography (US-1, US-7, NFR-1)
 
-- **KDF:** Argon2id via `hash-wasm` (WebCrypto has no Argon2). Parameters: 64 MiB
-  memory, t=3, p=4 (OWASP-current); stored in the public manifest so they can be
-  raised later per-vault.
+- **KDF:** Argon2id via `hash-wasm` (WebCrypto has no Argon2). Parameters: 19 MiB
+  memory, t=2, p=1 — the current OWASP recommendation for interactive logins;
+  stored in the public manifest so they can be raised later per-vault. (64 MiB/t=3
+  was tried and blew the NFR-2 unlock budget in-browser.)
 - **AEAD:** AES-256-GCM via WebCrypto with a **non-extractable** `CryptoKey` — the
   browser never exposes raw key bytes to JS after derivation (AC-1.4, AC-9.2).
   96-bit random nonces; at MVP write volumes (≪ 2³² records) random nonces are safe.
@@ -141,14 +142,20 @@ Autocomplete (AC-3.3) searches the title index and inserts the id form.
 
 ### 3.2 Catalog document (vault-level Y.Doc)
 
-A `Y.Map<NoteId, CatalogEntry>` where `CatalogEntry = { status: 'active' | 'deleted', editClock: number }`.
+A `Y.Map<NoteId, CatalogEntry>` where `CatalogEntry = { deleted: boolean, tombstoneSvB64?: string }`.
 
-- Delete sets `status: 'deleted'` (tombstone, AC-2.4) and records the clock.
-- Every note edit bumps `editClock` in the catalog.
-- **Edit-wins-over-delete (AC-8.3):** on merge, if `editClock` advanced past the
-  clock recorded by the tombstone, a deterministic post-merge rule resurrects the
-  note (`status: 'active'`). Pure function `resolveCatalog(entry) → entry`,
-  property-tested (NFR-6).
+- Delete sets `deleted: true` and snapshots the note doc's **state vector** into
+  the tombstone (AC-2.4).
+- **Edit-wins-over-delete (AC-8.3):** after any merge, if the merged note doc
+  contains structs the tombstone's state vector has not seen, a concurrent-or-
+  later edit occurred and the note projects as active. Pure function
+  `isNoteDeleted(entry, doc)`, unit-tested (NFR-6).
+- *Rationale for the revision:* clock counters inside LWW map values (the first
+  design) can be discarded by Yjs's last-writer-wins conflict resolution, losing
+  the concurrent editor's clock. State vectors live in the note doc itself,
+  which merges losslessly, so the rule is deterministic on every device.
+  Character-deletion-only edits do not bump state vectors and do not resurrect
+  (documented behavior).
 
 ---
 

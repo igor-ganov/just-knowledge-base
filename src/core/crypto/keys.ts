@@ -16,13 +16,16 @@ export type VaultManifest = {
   readonly createdAt: string;
 };
 
-/** OWASP-current interactive parameters (design §2.3); tunable per vault. */
+/**
+ * OWASP-recommended interactive parameters (m=19 MiB, t=2, p=1); stored in the
+ * manifest per vault, so they can be raised later without breaking old vaults.
+ */
 export const defaultKdfParams = (): KdfParams => ({
   algo: 'argon2id',
   saltB64: toBase64(randomBytes(16)),
-  memoryKiB: 64 * 1024,
-  iterations: 3,
-  parallelism: 4,
+  memoryKiB: 19 * 1024,
+  iterations: 2,
+  parallelism: 1,
 });
 
 const DEK_AAD = utf8Encode('jkb:v1:vault.json#dek');
