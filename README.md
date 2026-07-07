@@ -1,10 +1,20 @@
 # just-knowledge-base
 
-A local-first, end-to-end-encrypted personal knowledge base. Markdown notes with
-wiki-links, backlinks, tags, and instant full-text search — all data encrypted
-on your device with a key derived from your master password. Optional sync
-pushes the vault, already encrypted, to any git remote you control; concurrent
-edits from multiple devices merge automatically via CRDTs.
+A local-first, end-to-end-encrypted knowledge base. Markdown notes with an
+Obsidian-style live-preview editor (the markup opens a source window at the
+caret), folders, wiki-links, backlinks, tags, and instant search. Unlock with a
+passkey (WebAuthn PRF) or a master password. Optional sync pushes the vault to
+any git remote; concurrent edits merge automatically via CRDTs.
+
+Team-ready: the vault splits into a **public space** (plaintext, shared by
+every user of the repo) and per-user **private spaces** (encrypted with each
+user's own key). Identity comes from the git credential (PAT or GitHub OAuth
+device flow) and drives per-user settings.
+
+Every user action is a **command** with a context, conditions (uniform
+subscribable app states), and a remappable **hotkey** (`Ctrl+,` settings,
+`Ctrl+/` overlays key chips on every enabled control). `/workbench` hosts every
+component in isolation with live prop controls.
 
 ## How it works
 
