@@ -1,6 +1,8 @@
 import { css, html, LitElement, nothing } from 'lit';
+import { executeCommand } from '@core/commands/commandRegistry';
 import type { NoteSnapshot } from '@core/crdt/noteDoc';
 import { searchNotes, type KnowledgeIndex } from '@features/search/indexes';
+import { commandLabel } from '@ui/commandChip';
 import type { SyncStatus } from './appController';
 
 /**
@@ -16,6 +18,7 @@ export class KbSidebar extends LitElement {
     syncStatus: { attribute: false },
     syncConfigured: { type: Boolean },
     saveState: { type: String },
+    showHotkeys: { type: Boolean },
   };
 
   declare index: KnowledgeIndex;
@@ -25,6 +28,7 @@ export class KbSidebar extends LitElement {
   declare syncStatus: SyncStatus;
   declare syncConfigured: boolean;
   declare saveState: 'saved' | 'dirty' | 'saving';
+  declare showHotkeys: boolean;
 
   constructor() {
     super();
@@ -34,6 +38,7 @@ export class KbSidebar extends LitElement {
     this.syncStatus = { state: 'idle' };
     this.syncConfigured = false;
     this.saveState = 'saved';
+    this.showHotkeys = false;
   }
 
   static override styles = css`
@@ -188,8 +193,12 @@ export class KbSidebar extends LitElement {
         />
       </div>
       <div class="actions">
-        <button class="primary" @click=${() => this.emit('note-create', {})}>+ New note</button>
-        <button @click=${() => this.emit('vault-lock', {})}>Lock</button>
+        <button class="primary" @click=${() => void executeCommand('note.new')}>
+          ${commandLabel('note.new', '+ New note', this.showHotkeys)}
+        </button>
+        <button @click=${() => void executeCommand('vault.lock')}>
+          ${commandLabel('vault.lock', 'Lock', this.showHotkeys)}
+        </button>
       </div>
       <nav aria-label="Notes">
         <ul>
@@ -227,9 +236,14 @@ export class KbSidebar extends LitElement {
           · ${this.saveState === 'saved' ? 'Saved' : this.saveState === 'saving' ? 'Saving…' : 'Editing…'}
         </span>
         <span>
-          <button @click=${() => this.emit('sync-open-settings', {})}>Settings</button>
-          <button ?disabled=${!this.syncConfigured || this.syncStatus.state === 'syncing'} @click=${() => this.emit('sync-now', {})}>
-            Sync
+          <button @click=${() => void executeCommand('sync.settings')}>
+            ${commandLabel('sync.settings', 'Settings', this.showHotkeys)}
+          </button>
+          <button
+            ?disabled=${!this.syncConfigured || this.syncStatus.state === 'syncing'}
+            @click=${() => void executeCommand('sync.now')}
+          >
+            ${commandLabel('sync.now', 'Sync', this.showHotkeys)}
           </button>
         </span>
       </footer>

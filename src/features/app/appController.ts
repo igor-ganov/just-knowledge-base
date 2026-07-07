@@ -33,10 +33,10 @@ export type SyncStatus =
   | { readonly state: 'idle' | 'syncing' | 'ok' }
   | { readonly state: 'error'; readonly message: string };
 
+import { updateSettings, userSettingsStore } from '@features/settings/settingsService';
+
 const AUTOSAVE_MS = 700;
 const INDEX_REBUILD_MS = 120;
-const AUTO_LOCK_MS_DEFAULT = 15 * 60 * 1000;
-const AUTO_LOCK_KEY = 'jkb-autolock-minutes';
 
 export const phaseStore = createStore<Phase>('boot');
 export const indexStore = createStore<KnowledgeIndex>(emptyIndex());
@@ -63,13 +63,10 @@ let unsubscribeVault: (() => void) | undefined;
 
 export const vaultHandle = (): VaultHandle | undefined => handle;
 
-export const autoLockMs = (): number => {
-  const minutes = Number(globalThis.localStorage?.getItem(AUTO_LOCK_KEY) ?? '');
-  return Number.isFinite(minutes) && minutes > 0 ? minutes * 60 * 1000 : AUTO_LOCK_MS_DEFAULT;
-};
+export const autoLockMs = (): number => userSettingsStore.get().autoLockMinutes * 60 * 1000;
 
 export const setAutoLockMinutes = (minutes: number): void => {
-  globalThis.localStorage?.setItem(AUTO_LOCK_KEY, String(minutes));
+  updateSettings((settings) => ({ ...settings, autoLockMinutes: Math.max(1, minutes) }));
   resetIdleTimer();
 };
 

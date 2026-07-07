@@ -1,6 +1,11 @@
 import './polyfills';
 import { css, html, LitElement, nothing } from 'lit';
+import { dispatchKeydown } from '@core/commands/commandRegistry';
+import { getCondition, setCondition, subscribeCondition } from '@core/conditions/conditions';
 import type { NoteId } from '@core/crdt/noteDoc';
+import { KbSettingsDialog } from '@features/settings/kb-settings-dialog';
+import { initSettings } from '@features/settings/settingsService';
+import { bindConditionSources, CONDITIONS, registerAppCommands } from './commands';
 import type { KnowledgeIndex } from '@features/search/indexes';
 import type { SyncSettings } from '@features/sync/syncConfig';
 import {
@@ -11,7 +16,6 @@ import {
   enrollPasskeyForVault,
   indexStore,
   joinExistingVault,
-  lock,
   passkeyEnabledStore,
   passkeySupportedStore,
   phaseStore,
@@ -23,7 +27,6 @@ import {
   saveSyncSettings,
   selectedNoteStore,
   setAutoLockMinutes,
-  syncNow,
   syncSettingsStore,
   syncStatusStore,
   tagFilterStore,
@@ -38,7 +41,19 @@ import { KbSyncDialog } from '@features/sync/kb-sync-dialog';
 import '@features/vault/kb-lock-screen';
 import '@features/notes/kb-editor';
 import '@features/sync/kb-sync-dialog';
+import '@features/settings/kb-settings-dialog';
 import './kb-sidebar';
+
+let appWiringDone = false;
+
+/** One-time global wiring: settings, conditions, commands, key dispatcher. */
+const wireAppOnce = (ui: Parameters<typeof registerAppCommands>[0]): void => {
+  if (appWiringDone) return;
+  appWiringDone = true;
+  initSettings();
+  bindConditionSources();
+  registerAppCommands(ui);
+};
 
 /**
  * Root element: routes lock/workspace, owns hash navigation, wires store
@@ -95,8 +110,22 @@ export class KbApp extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
+    wireAppOnce({
+      focusSearch: () => this.focusSearch(),
+      newNote: () => this.createUntitled(),
+      deleteCurrentNote: () => {
+        const selected = selectedNoteStore.get();
+        if (selected !== undefined) removeNote(selected);
+      },
+      openAppSettings: (section) => this.openAppSettings(section ?? 'general'),
+      openSyncSettings: () => this.openSyncDialog(),
+      toggleFilesPanel: () => setCondition(CONDITIONS.filesOpen, !getCondition(CONDITIONS.filesOpen)),
+      unlockWithPasskey: () => void this.handlePasskeyUnlock(),
+    });
     const rerender = (): void => this.requestUpdate();
     this.subscriptions = [
+      subscribeCondition(CONDITIONS.showHotkeys, rerender),
+      subscribeCondition(CONDITIONS.filesOpen, rerender),
       phaseStore.subscribe((phase) => {
         this.phase = phase;
         this.busy = false;
@@ -130,30 +159,20 @@ export class KbApp extends LitElement {
 
   private onGlobalKey = (event: KeyboardEvent): void => {
     resetIdleTimer();
-    if (!event.ctrlKey || this.phase !== 'unlocked') return;
-    switch (event.key.toLowerCase()) {
-      case 'k': {
-        event.preventDefault();
-        const search = this.renderRoot
-          .querySelector('kb-sidebar')
-          ?.shadowRoot?.querySelector('input[type="search"]');
-        if (search instanceof HTMLInputElement) search.focus();
-        return;
-      }
-      case 'n': {
-        event.preventDefault();
-        this.createUntitled();
-        return;
-      }
-      case 'l': {
-        event.preventDefault();
-        void lock();
-        return;
-      }
-      default:
-        return;
-    }
+    dispatchKeydown(event);
   };
+
+  private focusSearch(): void {
+    const search = this.renderRoot
+      .querySelector('kb-sidebar')
+      ?.shadowRoot?.querySelector('input[type="search"]');
+    if (search instanceof HTMLInputElement) search.focus();
+  }
+
+  private openAppSettings(section: 'general' | 'hotkeys'): void {
+    const dialog = this.renderRoot.querySelector('kb-settings-dialog');
+    if (dialog instanceof KbSettingsDialog) dialog.show(section);
+  }
 
   private onHashChange = (): void => {
     const hash = decodeURIComponent(globalThis.location.hash);
@@ -213,7 +232,6 @@ export class KbApp extends LitElement {
     return html`
       <div
         class="workspace"
-        @note-create=${() => this.createUntitled()}
         @note-create-titled=${(event: CustomEvent<{ title: string }>) => {
           const id = addNote(event.detail.title);
           if (id !== undefined) globalThis.location.hash = `#/note/${id}`;
@@ -221,13 +239,9 @@ export class KbApp extends LitElement {
         @note-open=${(event: CustomEvent<{ id: string }>) => {
           globalThis.location.hash = `#/note/${event.detail.id}`;
         }}
-        @note-delete=${(event: CustomEvent<{ id: string }>) => removeNote(event.detail.id)}
         @query-change=${(event: CustomEvent<{ query: string }>) => queryStore.set(event.detail.query)}
         @tag-toggle=${(event: CustomEvent<{ tag: string }>) =>
           tagFilterStore.update((current) => (current === event.detail.tag ? undefined : event.detail.tag))}
-        @vault-lock=${() => void lock()}
-        @sync-now=${() => void syncNow()}
-        @sync-open-settings=${() => this.openSyncDialog()}
         @sync-save=${this.handleSyncSave}
         @passkey-enroll=${(event: CustomEvent<{ password: string }>) =>
           void enrollPasskeyForVault(event.detail.password)}
@@ -240,6 +254,7 @@ export class KbApp extends LitElement {
           .syncStatus=${status}
           .syncConfigured=${settings !== undefined && settings.url !== ''}
           .saveState=${saveStateStore.get()}
+          .showHotkeys=${getCondition(CONDITIONS.showHotkeys)}
         ></kb-sidebar>
         <main>
           <kb-editor .noteId=${selected ?? ''} .doc=${doc} .index=${index}></kb-editor>
@@ -251,6 +266,7 @@ export class KbApp extends LitElement {
           .passkeyEnabled=${passkeyEnabledStore.get()}
           .notice=${settingsNoticeStore.get() ?? ''}
         ></kb-sync-dialog>
+        <kb-settings-dialog></kb-settings-dialog>
       </div>
     `;
   }

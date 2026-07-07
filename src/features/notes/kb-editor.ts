@@ -1,5 +1,6 @@
 import { css, html, LitElement, nothing } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
+import { executeCommand } from '@core/commands/commandRegistry';
 import type * as Y from 'yjs';
 import { noteBody, noteTitle, type NoteId } from '@core/crdt/noteDoc';
 import { renderMarkdown } from '@core/markdown/render';
@@ -227,7 +228,7 @@ export class KbEditor extends LitElement {
         <button aria-pressed=${this.preview ? 'true' : 'false'} @click=${() => { this.preview = !this.preview; }}>
           ${this.preview ? 'Edit' : 'Preview'}
         </button>
-        <button @click=${() => this.emit('note-delete', { id: this.noteId })}>Delete</button>
+        <button @click=${() => void executeCommand('note.delete')}>Delete</button>
       </header>
       <div class="body">
         ${this.preview
