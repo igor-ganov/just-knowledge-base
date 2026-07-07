@@ -2,9 +2,10 @@ import { autocompletion, type CompletionContext, type CompletionResult } from '@
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
 import { EditorState } from '@codemirror/state';
-import { EditorView, keymap, lineNumbers, placeholder } from '@codemirror/view';
+import { EditorView, keymap, placeholder } from '@codemirror/view';
 import type * as Y from 'yjs';
 import type { KnowledgeIndex } from '@features/search/indexes';
+import { livePreview, type LivePreviewHooks } from './livePreview';
 
 /**
  * CodeMirror ⇄ Y.Text binding (design §7). The Y.Text is the source of truth;
@@ -86,15 +87,20 @@ export type EditorBinding = {
   readonly destroy: () => void;
 };
 
+export type EditorOptions = {
+  readonly sourceMode: boolean;
+  readonly hooks: LivePreviewHooks;
+};
+
 export const mountNoteEditor = (
   parent: HTMLElement,
   ytext: Y.Text,
   getIndex: () => KnowledgeIndex,
+  options: EditorOptions,
 ): EditorBinding => {
   const state = EditorState.create({
     doc: ytext.toString(),
     extensions: [
-      lineNumbers(),
       history(),
       markdown(),
       autocompletion({ override: [wikiLinkCompletion(getIndex)] }),
@@ -102,6 +108,7 @@ export const mountNoteEditor = (
       placeholder('Write your note in Markdown. Link with [[, tag with #'),
       EditorView.lineWrapping,
       pushEditorChangesToY(ytext),
+      ...(options.sourceMode ? [] : [livePreview(options.hooks)]),
     ],
   });
   const view = new EditorView({ state, parent });

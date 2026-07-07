@@ -1,15 +1,15 @@
 import { css, html, LitElement, nothing } from 'lit';
-import { unsafeHTML } from 'lit/directives/unsafe-html.js';
-import { executeCommand } from '@core/commands/commandRegistry';
 import type * as Y from 'yjs';
+import { executeCommand } from '@core/commands/commandRegistry';
 import { noteBody, noteTitle, type NoteId } from '@core/crdt/noteDoc';
-import { renderMarkdown } from '@core/markdown/render';
 import type { KnowledgeIndex } from '@features/search/indexes';
 import { mountNoteEditor, type EditorBinding } from './editorSetup';
 
 /**
- * Note editor pane (US-2, US-3): title input, CodeMirror source editor bound
- * to the note's Y.Text, Markdown preview toggle, backlinks panel.
+ * Note editor pane (specs knowledge-base-mvp US-2/US-3 + live-preview-editor):
+ * a single live-preview surface — formatted text with a source window at the
+ * caret — plus title, folder move, backlinks. A Source toggle shows raw
+ * markdown for the whole document.
  */
 export class KbEditor extends LitElement {
   static override properties = {
@@ -18,7 +18,7 @@ export class KbEditor extends LitElement {
     index: { attribute: false },
     folders: { attribute: false },
     folderId: { type: String },
-    preview: { type: Boolean, state: true },
+    sourceMode: { type: Boolean, state: true },
   };
 
   declare noteId: NoteId;
@@ -26,17 +26,15 @@ export class KbEditor extends LitElement {
   declare index: KnowledgeIndex;
   declare folders: ReadonlyArray<{ readonly id: string; readonly name: string }>;
   declare folderId: string;
-  declare preview: boolean;
+  declare sourceMode: boolean;
 
   private binding: EditorBinding | undefined;
   private subscribedDoc: Y.Doc | undefined;
-  private refreshPreview = (): void => {
-    if (this.preview) this.requestUpdate();
-  };
+  private onDocChange = (): void => this.requestUpdate();
 
   constructor() {
     super();
-    this.preview = false;
+    this.sourceMode = false;
     this.folders = [];
     this.folderId = '';
   }
@@ -54,6 +52,7 @@ export class KbEditor extends LitElement {
       gap: var(--space-2);
       align-items: center;
       padding: var(--space-3);
+      padding-left: calc(var(--space-3) + 3rem);
       border-bottom: 1px solid var(--color-border);
     }
     input.title {
@@ -103,25 +102,68 @@ export class KbEditor extends LitElement {
     }
     .editor-host .cm-editor {
       height: 100%;
-      font-size: 0.95rem;
+      font-size: 1rem;
     }
-    .preview {
-      padding: var(--space-3) var(--space-4);
-      line-height: 1.6;
+    .editor-host .cm-content {
       max-width: 48rem;
+      padding: var(--space-3) var(--space-4);
+      line-height: 1.65;
     }
-    .preview pre {
+    .editor-host .cm-live-h1 {
+      font-size: 1.7em;
+      font-weight: 700;
+    }
+    .editor-host .cm-live-h2 {
+      font-size: 1.4em;
+      font-weight: 700;
+    }
+    .editor-host .cm-live-h3 {
+      font-size: 1.2em;
+      font-weight: 600;
+    }
+    .editor-host .cm-live-h4,
+    .editor-host .cm-live-h5,
+    .editor-host .cm-live-h6 {
+      font-weight: 600;
+    }
+    .editor-host .cm-live-strong {
+      font-weight: 700;
+    }
+    .editor-host .cm-live-em {
+      font-style: italic;
+    }
+    .editor-host .cm-live-code,
+    .editor-host .cm-live-codeblock {
+      font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
       background: var(--color-surface);
-      padding: var(--space-2);
-      border-radius: var(--radius-sm);
-      overflow-x: auto;
+      border-radius: 3px;
     }
-    .preview a.wiki-link {
+    .editor-host .cm-live-quote {
+      border-left: 3px solid var(--color-accent);
+      padding-left: var(--space-2);
+      color: var(--color-text-muted);
+    }
+    .editor-host .cm-live-link {
       color: var(--color-accent-strong);
+      text-decoration: underline;
     }
-    .preview a.wiki-link--unresolved {
+    .editor-host .cm-wikilink {
+      color: var(--color-accent-strong);
+      text-decoration: underline;
+      cursor: pointer;
+    }
+    .editor-host .cm-wikilink-unresolved {
       color: var(--color-danger);
       text-decoration-style: dashed;
+    }
+    .editor-host .cm-live-tag {
+      color: var(--color-accent-strong);
+      background: var(--color-accent-soft);
+      border-radius: 3px;
+    }
+    .editor-host .cm-bullet {
+      color: var(--color-accent);
+      font-weight: 700;
     }
     aside {
       border-top: 1px solid var(--color-border);
@@ -169,18 +211,25 @@ export class KbEditor extends LitElement {
   }
 
   protected override updated(changed: Map<string, unknown>): void {
-    if (changed.has('noteId') || changed.has('doc') || changed.has('preview')) {
+    if (changed.has('doc')) {
+      this.subscribedDoc?.off('update', this.onDocChange);
+      this.doc?.on('update', this.onDocChange);
+      this.subscribedDoc = this.doc;
+    }
+    if (changed.has('noteId') || changed.has('doc') || changed.has('sourceMode')) {
       this.teardownEditor();
       const host = this.renderRoot.querySelector('.editor-host');
       const doc = this.doc;
-      if (!this.preview && host instanceof HTMLElement && doc !== undefined) {
-        this.binding = mountNoteEditor(host, noteBody(doc), () => this.index);
+      if (host instanceof HTMLElement && doc !== undefined) {
+        this.binding = mountNoteEditor(host, noteBody(doc), () => this.index, {
+          sourceMode: this.sourceMode,
+          hooks: {
+            resolveTitle: (title) => this.index.titleToId.get(title.toLowerCase()),
+            openNote: (noteId) => this.emit('note-open', { id: noteId }),
+            createNote: (title) => this.emit('note-create-titled', { title }),
+          },
+        });
       }
-    }
-    if (changed.has('doc')) {
-      this.subscribedDoc?.off('update', this.refreshPreview);
-      this.doc?.on('update', this.refreshPreview);
-      this.subscribedDoc = this.doc;
     }
   }
 
@@ -193,24 +242,6 @@ export class KbEditor extends LitElement {
       text.delete(0, text.length);
       text.insert(0, value);
     });
-  }
-
-  private onPreviewClick(event: Event): void {
-    const path = event.composedPath();
-    const anchor = path.find(
-      (node): node is HTMLAnchorElement => node instanceof HTMLAnchorElement,
-    );
-    if (anchor === undefined) return;
-    const noteId = anchor.dataset['noteId'];
-    const createTitle = anchor.dataset['createTitle'];
-    if (noteId !== undefined) {
-      event.preventDefault();
-      this.emit('note-open', { id: noteId });
-    }
-    if (createTitle !== undefined) {
-      event.preventDefault();
-      this.emit('note-create-titled', { title: createTitle });
-    }
   }
 
   private backlinkEntries(): ReadonlyArray<{ id: string; title: string }> {
@@ -227,10 +258,6 @@ export class KbEditor extends LitElement {
       return html`<div class="empty"><p>Select a note or create a new one.</p></div>`;
     }
     const backlinks = this.backlinkEntries();
-    const resolve = ({ value }: { readonly kind: 'title'; readonly value: string }) => {
-      const id = this.index.titleToId.get(value.toLowerCase());
-      return id === undefined ? undefined : { noteId: id };
-    };
     return html`
       <header>
         <input
@@ -253,17 +280,18 @@ export class KbEditor extends LitElement {
             (folder) => html`<option value=${folder.id} ?selected=${folder.id === this.folderId}>${folder.name}</option>`,
           )}
         </select>
-        <button aria-pressed=${this.preview ? 'true' : 'false'} @click=${() => { this.preview = !this.preview; }}>
-          ${this.preview ? 'Edit' : 'Preview'}
+        <button
+          aria-pressed=${this.sourceMode ? 'true' : 'false'}
+          @click=${() => {
+            this.sourceMode = !this.sourceMode;
+          }}
+        >
+          ${this.sourceMode ? 'Live' : 'Source'}
         </button>
         <button @click=${() => void executeCommand('note.delete')}>Delete</button>
       </header>
       <div class="body">
-        ${this.preview
-          ? html`<div class="preview" @click=${this.onPreviewClick}>
-              ${unsafeHTML(renderMarkdown(noteBody(doc).toString(), resolve))}
-            </div>`
-          : html`<div class="editor-host"></div>`}
+        <div class="editor-host"></div>
       </div>
       ${backlinks.length > 0
         ? html`<aside aria-label="Backlinks">

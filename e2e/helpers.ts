@@ -26,7 +26,12 @@ export const newNote = async (page: Page, title: string, body: string): Promise<
   await titleInput.fill(title);
   await page.locator('.cm-content').click();
   await page.keyboard.type(body);
-  await expect(page.locator('.cm-content')).toContainText(body.split('\n')[0] ?? body);
+  // Live preview may hide markup, so probe for the first plain word only.
+  const probe = (body.split('\n')[0] ?? '')
+    .replace(/[#*`>|[\]-]/gu, ' ')
+    .trim()
+    .split(/\s+/u)[0] ?? '';
+  if (probe !== '') await expect(page.locator('.cm-content')).toContainText(probe);
 };
 
 /** Autosave flush is debounced; wait for the note list to reflect state instead of sleeping. */

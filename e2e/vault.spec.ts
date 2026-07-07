@@ -35,14 +35,21 @@ test.describe('vault lifecycle (US-1)', () => {
   });
 });
 
-test.describe('notes and markdown (US-2)', () => {
-  test('AC-2.3: markdown renders in preview', async ({ page }) => {
+test.describe('notes and markdown (US-2, live preview)', () => {
+  test('AC-2.3: markdown renders live, marks hidden away from the caret', async ({ page }) => {
     await createVault(page);
-    await newNote(page, 'Formatted', '# Heading\n\nsome **bold** text\n- item one');
-    await page.getByRole('button', { name: 'Preview' }).click();
-    await expect(page.getByRole('heading', { name: 'Heading' })).toBeVisible();
-    await expect(page.locator('.preview strong')).toHaveText('bold');
-    await expect(page.locator('.preview li')).toHaveText('item one');
+    await newNote(page, 'Formatted', '# Heading\n\nsome **bold** text\n- item one\n');
+    await expect(page.locator('.cm-live-h1')).toHaveText('Heading');
+    await expect(page.locator('.cm-live-strong')).toHaveText('bold');
+    await expect(page.locator('.cm-bullet')).toBeVisible();
+  });
+
+  test('live preview: caret opens a source window into the element', async ({ page }) => {
+    await createVault(page);
+    await newNote(page, 'Windowed', '# Heading\n\nbody\n');
+    await expect(page.locator('.cm-live-h1')).toHaveText('Heading');
+    await page.locator('.cm-live-h1').click();
+    await expect(page.locator('.cm-live-h1')).toHaveText('# Heading');
   });
 
   test('AC-2.4: deleted note disappears from the list', async ({ page }) => {
@@ -55,22 +62,20 @@ test.describe('notes and markdown (US-2)', () => {
 });
 
 test.describe('wiki-links and backlinks (US-3)', () => {
-  test('AC-3.1 + AC-3.4: link navigates, backlink appears', async ({ page }) => {
+  test('AC-3.1 + AC-3.4: live wiki-link navigates, backlink appears', async ({ page }) => {
     await createVault(page);
     await newNote(page, 'Target', 'the destination');
-    await newNote(page, 'Source', 'see [[Target]]');
+    await newNote(page, 'Source', 'see [[Target]]\nmore text');
     await expectNoteListed(page, 'Source');
-    await page.getByRole('button', { name: 'Preview' }).click();
-    await page.locator('.preview a.wiki-link').click();
+    await page.locator('.cm-wikilink').click();
     await expect(page.getByLabel('Note title')).toHaveValue('Target');
     await expect(page.locator('aside[aria-label="Backlinks"]')).toContainText('Source');
   });
 
-  test('AC-3.2: unresolved link is distinct and creates the note on click', async ({ page }) => {
+  test('AC-3.2: unresolved live link is distinct and creates the note on click', async ({ page }) => {
     await createVault(page);
-    await newNote(page, 'Origin', 'go to [[Not Yet Created]]');
-    await page.getByRole('button', { name: 'Preview' }).click();
-    const unresolved = page.locator('.preview a.wiki-link--unresolved');
+    await newNote(page, 'Origin', 'go to [[Not Yet Created]]\nmore text');
+    const unresolved = page.locator('.cm-wikilink-unresolved');
     await expect(unresolved).toBeVisible();
     await unresolved.click();
     await expect(page.getByLabel('Note title')).toHaveValue('Not Yet Created');
@@ -86,7 +91,7 @@ test.describe('wiki-links and backlinks (US-3)', () => {
     const option = page.locator('.cm-tooltip-autocomplete li').first();
     await expect(option).toContainText('Autocomplete Target');
     await option.click();
-    await expect(page.locator('.cm-content')).toContainText('|Autocomplete Target]]');
+    await expect(page.locator('.cm-content')).toContainText('|Autocomplete Target');
   });
 });
 
