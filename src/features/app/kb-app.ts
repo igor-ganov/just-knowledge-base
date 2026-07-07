@@ -1,17 +1,24 @@
 import './polyfills';
 import { css, html, LitElement, nothing } from 'lit';
-import { dispatchKeydown } from '@core/commands/commandRegistry';
+import { dispatchKeydown, executeCommand } from '@core/commands/commandRegistry';
 import { getCondition, setCondition, subscribeCondition } from '@core/conditions/conditions';
 import type { NoteId } from '@core/crdt/noteDoc';
+import { commandLabel } from '@ui/commandChip';
 import { KbSettingsDialog } from '@features/settings/kb-settings-dialog';
 import { initSettings } from '@features/settings/settingsService';
 import { bindConditionSources, CONDITIONS, registerAppCommands } from './commands';
 import type { KnowledgeIndex } from '@features/search/indexes';
 import type { SyncSettings } from '@features/sync/syncConfig';
 import {
+  addFolder,
   addNote,
+  addNoteInFolder,
   autoLockMs,
+  availableFolders,
   boot,
+  currentFolderTree,
+  folderOfNote,
+  moveNoteToFolder,
   createNewVault,
   enrollPasskeyForVault,
   indexStore,
@@ -42,7 +49,7 @@ import '@features/vault/kb-lock-screen';
 import '@features/notes/kb-editor';
 import '@features/sync/kb-sync-dialog';
 import '@features/settings/kb-settings-dialog';
-import './kb-sidebar';
+import './kb-file-panel';
 
 let appWiringDone = false;
 
@@ -84,27 +91,69 @@ export class KbApp extends LitElement {
       color: var(--color-text);
     }
     .workspace {
-      display: grid;
-      grid-template-columns: minmax(14rem, 18rem) 1fr;
+      position: relative;
       height: 100%;
+      overflow: hidden;
     }
-    kb-sidebar {
-      border-right: 1px solid var(--color-border);
+    aside.files {
+      position: fixed;
+      inset: 0 auto 0 0;
+      width: min(20rem, 88vw);
       background: var(--color-bg-raised);
+      border-right: 1px solid var(--color-border);
+      box-shadow: var(--shadow-2);
+      transform: translateX(-105%);
+      transition: transform 160ms ease;
+      z-index: 20;
+    }
+    aside.files[data-open='true'] {
+      transform: translateX(0);
     }
     main {
       min-width: 0;
       height: 100%;
+      transition: padding-left 160ms ease;
     }
-    @media (max-width: 44rem) {
-      .workspace {
-        grid-template-columns: 1fr;
-        grid-template-rows: minmax(0, 40dvh) 1fr;
+    @media (min-width: 64rem) {
+      main[data-panel='true'] {
+        padding-left: min(20rem, 88vw);
       }
-      kb-sidebar {
-        border-right: none;
-        border-bottom: 1px solid var(--color-border);
+      aside.files[data-open='true'] {
+        box-shadow: none;
       }
+    }
+    .fab {
+      position: fixed;
+      z-index: 30;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--color-border);
+      background: var(--color-surface);
+      color: var(--color-text);
+      cursor: pointer;
+      box-shadow: var(--shadow-1);
+    }
+    .fab-files {
+      top: var(--space-3);
+      left: var(--space-3);
+      width: 2.5rem;
+      height: 2.5rem;
+      border-radius: var(--radius-lg);
+      font-size: 1.1rem;
+    }
+    .fab-new {
+      right: var(--space-4);
+      bottom: var(--space-4);
+      width: 3.25rem;
+      height: 3.25rem;
+      border-radius: 50%;
+      font-size: 1.6rem;
+      background: var(--color-accent);
+      color: var(--color-accent-contrast);
+      border: none;
+    }
+    .fab:hover {
+      filter: brightness(1.06);
     }
   `;
 
@@ -113,6 +162,10 @@ export class KbApp extends LitElement {
     wireAppOnce({
       focusSearch: () => this.focusSearch(),
       newNote: () => this.createUntitled(),
+      newFolder: () => {
+        addFolder(`New folder ${availableFolders().length + 1}`);
+        this.requestUpdate();
+      },
       deleteCurrentNote: () => {
         const selected = selectedNoteStore.get();
         if (selected !== undefined) removeNote(selected);
@@ -163,8 +216,9 @@ export class KbApp extends LitElement {
   };
 
   private focusSearch(): void {
+    setCondition(CONDITIONS.filesOpen, true);
     const search = this.renderRoot
-      .querySelector('kb-sidebar')
+      .querySelector('kb-file-panel')
       ?.shadowRoot?.querySelector('input[type="search"]');
     if (search instanceof HTMLInputElement) search.focus();
   }
@@ -179,7 +233,10 @@ export class KbApp extends LitElement {
     const note = hash.match(/^#\/note\/(.+)$/u);
     const tag = hash.match(/^#\/tag\/(.+)$/u);
     const create = hash.match(/^#\/new\/(.+)$/u);
-    if (note !== null && this.phase === 'unlocked') selectedNoteStore.set(note[1]);
+    if (note !== null && this.phase === 'unlocked') {
+      selectedNoteStore.set(note[1]);
+      if (getCondition(CONDITIONS.narrow)) setCondition(CONDITIONS.filesOpen, false);
+    }
     if (tag !== null) tagFilterStore.set(tag[1]);
     if (create !== null && this.phase === 'unlocked') {
       const created = addNote(create[1] ?? 'Untitled');
@@ -229,6 +286,8 @@ export class KbApp extends LitElement {
     const doc = selected === undefined ? undefined : handle?.notes.get(selected);
     const settings = syncSettingsStore.get();
     const status: SyncStatus = syncStatusStore.get();
+    const panelOpen = getCondition(CONDITIONS.filesOpen);
+    const showHotkeys = getCondition(CONDITIONS.showHotkeys);
     return html`
       <div
         class="workspace"
@@ -239,6 +298,15 @@ export class KbApp extends LitElement {
         @note-open=${(event: CustomEvent<{ id: string }>) => {
           globalThis.location.hash = `#/note/${event.detail.id}`;
         }}
+        @note-create-in-folder=${(event: CustomEvent<{ folderId: string }>) => {
+          const id = addNoteInFolder(event.detail.folderId);
+          if (id !== undefined) globalThis.location.hash = `#/note/${id}`;
+        }}
+        @note-move=${(event: CustomEvent<{ id: string; folderId: string }>) => {
+          moveNoteToFolder(event.detail.id, event.detail.folderId);
+          this.requestUpdate();
+        }}
+        @folder-create=${() => void executeCommand('folder.new')}
         @query-change=${(event: CustomEvent<{ query: string }>) => queryStore.set(event.detail.query)}
         @tag-toggle=${(event: CustomEvent<{ tag: string }>) =>
           tagFilterStore.update((current) => (current === event.detail.tag ? undefined : event.detail.tag))}
@@ -246,19 +314,39 @@ export class KbApp extends LitElement {
         @passkey-enroll=${(event: CustomEvent<{ password: string }>) =>
           void enrollPasskeyForVault(event.detail.password)}
       >
-        <kb-sidebar
-          .index=${index}
-          .selectedId=${selected ?? ''}
-          .query=${queryStore.get()}
-          .tagFilter=${tagFilterStore.get() ?? ''}
-          .syncStatus=${status}
-          .syncConfigured=${settings !== undefined && settings.url !== ''}
-          .saveState=${saveStateStore.get()}
-          .showHotkeys=${getCondition(CONDITIONS.showHotkeys)}
-        ></kb-sidebar>
-        <main>
-          <kb-editor .noteId=${selected ?? ''} .doc=${doc} .index=${index}></kb-editor>
+        <button
+          class="fab fab-files"
+          aria-label="Toggle file panel"
+          aria-expanded=${panelOpen ? 'true' : 'false'}
+          @click=${() => void executeCommand('panel.files')}
+        >
+          ${commandLabel('panel.files', '☰', showHotkeys)}
+        </button>
+        <aside class="files" data-open=${panelOpen ? 'true' : 'false'} aria-label="Files" aria-hidden=${panelOpen ? 'false' : 'true'}>
+          <kb-file-panel
+            .index=${index}
+            .tree=${currentFolderTree()}
+            .selectedId=${selected ?? ''}
+            .query=${queryStore.get()}
+            .tagFilter=${tagFilterStore.get() ?? ''}
+            .syncStatus=${status}
+            .syncConfigured=${settings !== undefined && settings.url !== ''}
+            .saveState=${saveStateStore.get()}
+            .showHotkeys=${showHotkeys}
+          ></kb-file-panel>
+        </aside>
+        <main data-panel=${panelOpen ? 'true' : 'false'}>
+          <kb-editor
+            .noteId=${selected ?? ''}
+            .doc=${doc}
+            .index=${index}
+            .folders=${availableFolders()}
+            .folderId=${selected === undefined ? '' : folderOfNote(selected)}
+          ></kb-editor>
         </main>
+        <button class="fab fab-new" aria-label="New note" @click=${() => void executeCommand('note.new')}>
+          ${commandLabel('note.new', '＋', showHotkeys)}
+        </button>
         <kb-sync-dialog
           .settings=${settings}
           .autoLockMinutes=${Math.round(autoLockMs() / 60000)}

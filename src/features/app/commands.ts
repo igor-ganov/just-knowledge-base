@@ -21,11 +21,13 @@ export const CONDITIONS = {
   syncIdle: 'sync.idle',
   showHotkeys: 'mode.showHotkeys',
   filesOpen: 'panel.filesOpen',
+  narrow: 'viewport.narrow',
 } as const;
 
 export type AppUi = {
   readonly focusSearch: () => void;
   readonly newNote: () => void;
+  readonly newFolder: () => void;
   readonly deleteCurrentNote: () => void;
   readonly openAppSettings: (section?: 'general' | 'hotkeys') => void;
   readonly openSyncSettings: () => void;
@@ -40,7 +42,10 @@ export const bindConditionSources = (): void => {
   defineCondition(CONDITIONS.syncConfigured, false);
   defineCondition(CONDITIONS.syncIdle, true);
   defineCondition(CONDITIONS.showHotkeys, false);
-  defineCondition(CONDITIONS.filesOpen, true);
+  const narrowQuery = globalThis.matchMedia?.('(max-width: 64rem)');
+  defineCondition(CONDITIONS.narrow, narrowQuery?.matches ?? false);
+  defineCondition(CONDITIONS.filesOpen, !(narrowQuery?.matches ?? false));
+  narrowQuery?.addEventListener('change', (event) => setCondition(CONDITIONS.narrow, event.matches));
 
   phaseStore.subscribe((phase) => {
     setCondition(CONDITIONS.unlocked, phase === 'unlocked');
@@ -151,5 +156,22 @@ export const registerAppCommands = (ui: AppUi): void => {
     defaultHotkey: 'Escape',
     global: true,
     run: () => setCondition(CONDITIONS.showHotkeys, false),
+  });
+  // Registered after hideHotkeys on purpose: Escape resolves to the first
+  // enabled match, so chips close before the panel does.
+  registerCommand({
+    id: 'panel.close',
+    title: 'Close file panel',
+    context: 'navigation',
+    conditions: [CONDITIONS.filesOpen, CONDITIONS.narrow],
+    defaultHotkey: 'Escape',
+    run: () => setCondition(CONDITIONS.filesOpen, false),
+  });
+  registerCommand({
+    id: 'folder.new',
+    title: 'New folder',
+    context: 'notes',
+    conditions: [CONDITIONS.unlocked],
+    run: ui.newFolder,
   });
 };

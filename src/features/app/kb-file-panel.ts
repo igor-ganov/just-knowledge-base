@@ -1,17 +1,19 @@
 import { css, html, LitElement, nothing } from 'lit';
 import { executeCommand } from '@core/commands/commandRegistry';
 import type { NoteSnapshot } from '@core/crdt/noteDoc';
+import type { FolderTree } from '@core/crdt/folders';
 import { searchNotes, type KnowledgeIndex } from '@features/search/indexes';
 import { commandLabel } from '@ui/commandChip';
 import type { SyncStatus } from './appController';
 
 /**
- * Sidebar (US-4, US-5): search, note list, tag list with counts, sync status.
- * Pure projection of properties; every intent is an event to kb-app.
+ * File panel (spec folders-and-shell, AC-F2.2): search, folder tree with
+ * notes, tags, status. Slides in from the left; kb-app owns the open state.
  */
-export class KbSidebar extends LitElement {
+export class KbFilePanel extends LitElement {
   static override properties = {
     index: { attribute: false },
+    tree: { attribute: false },
     selectedId: { type: String },
     query: { type: String },
     tagFilter: { type: String },
@@ -22,6 +24,7 @@ export class KbSidebar extends LitElement {
   };
 
   declare index: KnowledgeIndex;
+  declare tree: FolderTree;
   declare selectedId: string;
   declare query: string;
   declare tagFilter: string;
@@ -32,6 +35,7 @@ export class KbSidebar extends LitElement {
 
   constructor() {
     super();
+    this.tree = { id: '', name: '', folders: [], notes: [] };
     this.selectedId = '';
     this.query = '';
     this.tagFilter = '';
@@ -48,6 +52,7 @@ export class KbSidebar extends LitElement {
       gap: var(--space-3);
       height: 100%;
       padding: var(--space-3);
+      padding-top: calc(var(--space-3) + 3rem);
       box-sizing: border-box;
       overflow: hidden;
     }
@@ -63,6 +68,7 @@ export class KbSidebar extends LitElement {
     .actions {
       display: flex;
       gap: var(--space-2);
+      flex-wrap: wrap;
     }
     button {
       padding: var(--space-1) var(--space-2);
@@ -72,11 +78,6 @@ export class KbSidebar extends LitElement {
       color: var(--color-text);
       cursor: pointer;
       font-size: 0.85rem;
-    }
-    button.primary {
-      background: var(--color-accent);
-      border-color: var(--color-accent);
-      color: var(--color-accent-contrast);
     }
     nav {
       flex: 1;
@@ -108,11 +109,38 @@ export class KbSidebar extends LitElement {
       background: var(--color-accent-soft);
       color: var(--color-accent-strong);
     }
+    details {
+      margin: 0;
+    }
+    details > ul,
+    details > details {
+      margin-left: var(--space-3);
+    }
+    summary {
+      cursor: pointer;
+      padding: var(--space-1) var(--space-2);
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      gap: var(--space-1);
+      font-weight: 500;
+    }
+    summary:hover {
+      background: var(--color-surface);
+    }
+    summary .folder-add {
+      margin-left: auto;
+      border: none;
+      background: none;
+      color: var(--color-text-muted);
+      font-size: 0.9rem;
+      padding: 0 var(--space-1);
+    }
     .tags {
       display: flex;
       flex-wrap: wrap;
       gap: var(--space-1);
-      max-height: 8rem;
+      max-height: 7rem;
       overflow-y: auto;
     }
     .tag {
@@ -137,12 +165,10 @@ export class KbSidebar extends LitElement {
       border-top: 1px solid var(--color-border);
       padding-top: var(--space-2);
       font-size: 0.85rem;
+      flex-wrap: wrap;
     }
     .sync-state {
       color: var(--color-text-muted);
-    }
-    .sync-state[data-state='error'] {
-      color: var(--color-danger);
     }
     h2 {
       font-size: 0.75rem;
@@ -152,13 +178,6 @@ export class KbSidebar extends LitElement {
       margin: 0;
     }
   `;
-
-  private visibleNotes(): ReadonlyArray<NoteSnapshot> {
-    const byQuery = searchNotes(this.index, this.query);
-    const tag = this.tagFilter;
-    const tagged = tag === '' || tag === undefined ? byQuery : byQuery.filter((note) => (this.index.tags.get(tag) ?? []).includes(note.id));
-    return [...tagged].sort((left, right) => left.title.localeCompare(right.title));
-  }
 
   private emit(name: string, detail: unknown): void {
     this.dispatchEvent(new CustomEvent(name, { detail, bubbles: true, composed: true }));
@@ -173,12 +192,67 @@ export class KbSidebar extends LitElement {
       case 'ok':
         return 'Synced';
       case 'error':
-        return `Sync error`;
+        return 'Sync error';
     }
   }
 
+  private saveLabel(): string {
+    switch (this.saveState) {
+      case 'saved':
+        return 'Saved';
+      case 'saving':
+        return 'Saving…';
+      case 'dirty':
+        return 'Editing…';
+    }
+  }
+
+  private noteRow(note: NoteSnapshot): unknown {
+    return html`<li>
+      <a href=${`#/note/${note.id}`} aria-current=${note.id === this.selectedId ? 'page' : nothing}
+        >${note.title === '' ? 'Untitled' : note.title}</a
+      >
+    </li>`;
+  }
+
+  private folderNode(folder: FolderTree): unknown {
+    return html`<details open>
+      <summary>
+        📁 ${folder.name}
+        <button
+          class="folder-add"
+          aria-label=${`New note in ${folder.name}`}
+          title="New note here"
+          @click=${(event: Event) => {
+            event.preventDefault();
+            this.emit('note-create-in-folder', { folderId: folder.id });
+          }}
+        >
+          ＋
+        </button>
+      </summary>
+      ${folder.folders.map((child) => this.folderNode(child))}
+      <ul>
+        ${folder.notes.map((note) => this.noteRow(note))}
+      </ul>
+    </details>`;
+  }
+
+  private filteredList(): unknown {
+    const tag = this.tagFilter;
+    const byQuery = searchNotes(this.index, this.query);
+    const notes =
+      tag === '' ? byQuery : byQuery.filter((note) => (this.index.tags.get(tag) ?? []).includes(note.id));
+    return html`<ul>
+      ${[...notes]
+        .sort((left, right) => left.title.localeCompare(right.title))
+        .map((note) => this.noteRow(note))}
+      ${notes.length === 0 ? html`<li><p style="color: var(--color-text-muted)">No notes match.</p></li>` : nothing}
+    </ul>`;
+  }
+
   protected override render(): unknown {
-    const notes = this.visibleNotes();
+    const filtering = this.query !== '' || this.tagFilter !== '';
     return html`
       <div role="search">
         <input
@@ -193,26 +267,16 @@ export class KbSidebar extends LitElement {
         />
       </div>
       <div class="actions">
-        <button class="primary" @click=${() => void executeCommand('note.new')}>
-          ${commandLabel('note.new', '+ New note', this.showHotkeys)}
-        </button>
+        <button @click=${() => this.emit('folder-create', {})}>＋ Folder</button>
         <button @click=${() => void executeCommand('vault.lock')}>
           ${commandLabel('vault.lock', 'Lock', this.showHotkeys)}
         </button>
       </div>
-      <nav aria-label="Notes">
+      <nav aria-label="Notes">${filtering ? this.filteredList() : html`
+        ${this.tree.folders.map((folder) => this.folderNode(folder))}
         <ul>
-          ${notes.map(
-            (note) => html`<li>
-              <a
-                href=${`#/note/${note.id}`}
-                aria-current=${note.id === this.selectedId ? 'page' : nothing}
-                >${note.title === '' ? 'Untitled' : note.title}</a
-              >
-            </li>`,
-          )}
-        </ul>
-        ${notes.length === 0 ? html`<p style="color: var(--color-text-muted)">No notes match.</p>` : nothing}
+          ${this.tree.notes.map((note) => this.noteRow(note))}
+        </ul>`}
       </nav>
       <section aria-label="Tags">
         <h2>Tags</h2>
@@ -232,18 +296,21 @@ export class KbSidebar extends LitElement {
       </section>
       <footer>
         <span class="sync-state" aria-live="polite">
-          <span data-state=${this.syncStatus.state} title=${this.syncStatus.state === 'error' ? this.syncStatus.message : ''}>${this.syncLabel()}</span>
-          · ${this.saveState === 'saved' ? 'Saved' : this.saveState === 'saving' ? 'Saving…' : 'Editing…'}
+          <span title=${this.syncStatus.state === 'error' ? this.syncStatus.message : ''}>${this.syncLabel()}</span>
+          · ${this.saveLabel()}
         </span>
         <span>
+          <button @click=${() => void executeCommand('settings.open')}>
+            ${commandLabel('settings.open', 'Settings', this.showHotkeys)}
+          </button>
           <button @click=${() => void executeCommand('sync.settings')}>
-            ${commandLabel('sync.settings', 'Settings', this.showHotkeys)}
+            ${commandLabel('sync.settings', 'Sync', this.showHotkeys)}
           </button>
           <button
             ?disabled=${!this.syncConfigured || this.syncStatus.state === 'syncing'}
             @click=${() => void executeCommand('sync.now')}
           >
-            ${commandLabel('sync.now', 'Sync', this.showHotkeys)}
+            ${commandLabel('sync.now', 'Sync now', this.showHotkeys)}
           </button>
         </span>
       </footer>
@@ -251,4 +318,4 @@ export class KbSidebar extends LitElement {
   }
 }
 
-customElements.define('kb-sidebar', KbSidebar);
+customElements.define('kb-file-panel', KbFilePanel);

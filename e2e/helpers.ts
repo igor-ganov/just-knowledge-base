@@ -10,7 +10,7 @@ export const createVault = async (page: Page): Promise<void> => {
   await page.getByLabel('Master password').fill(PASSWORD);
   await page.getByLabel('Repeat password').fill(PASSWORD);
   await page.getByRole('button', { name: 'Create vault' }).click();
-  await expect(page.getByRole('button', { name: '+ New note' })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole('button', { name: 'New note', exact: true })).toBeVisible({ timeout: 30_000 });
 };
 
 export const unlockVault = async (page: Page, password: string = PASSWORD): Promise<void> => {
@@ -20,7 +20,7 @@ export const unlockVault = async (page: Page, password: string = PASSWORD): Prom
 };
 
 export const newNote = async (page: Page, title: string, body: string): Promise<void> => {
-  await page.getByRole('button', { name: '+ New note' }).click();
+  await page.getByRole('button', { name: 'New note', exact: true }).click();
   const titleInput = page.getByLabel('Note title');
   await expect(titleInput).toBeVisible();
   await titleInput.fill(title);

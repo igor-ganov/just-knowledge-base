@@ -16,12 +16,16 @@ export class KbEditor extends LitElement {
     noteId: { type: String },
     doc: { attribute: false },
     index: { attribute: false },
+    folders: { attribute: false },
+    folderId: { type: String },
     preview: { type: Boolean, state: true },
   };
 
   declare noteId: NoteId;
   declare doc: Y.Doc | undefined;
   declare index: KnowledgeIndex;
+  declare folders: ReadonlyArray<{ readonly id: string; readonly name: string }>;
+  declare folderId: string;
   declare preview: boolean;
 
   private binding: EditorBinding | undefined;
@@ -33,6 +37,8 @@ export class KbEditor extends LitElement {
   constructor() {
     super();
     this.preview = false;
+    this.folders = [];
+    this.folderId = '';
   }
 
   static override styles = css`
@@ -74,6 +80,15 @@ export class KbEditor extends LitElement {
       background: var(--color-accent-soft);
       border-color: var(--color-accent);
       color: var(--color-accent-strong);
+    }
+    select {
+      padding: var(--space-1) var(--space-2);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-sm);
+      background: var(--color-surface);
+      color: var(--color-text);
+      font-size: 0.85rem;
+      max-width: 9rem;
     }
     .body {
       flex: 1;
@@ -225,6 +240,19 @@ export class KbEditor extends LitElement {
           .value=${noteTitle(doc).toString()}
           @input=${this.onTitleInput}
         />
+        <select
+          aria-label="Move to folder"
+          .value=${this.folderId}
+          @change=${(event: Event) => {
+            const value = event.target instanceof HTMLSelectElement ? event.target.value : '';
+            this.emit('note-move', { id: this.noteId, folderId: value });
+          }}
+        >
+          <option value="">(root)</option>
+          ${this.folders.map(
+            (folder) => html`<option value=${folder.id} ?selected=${folder.id === this.folderId}>${folder.name}</option>`,
+          )}
+        </select>
         <button aria-pressed=${this.preview ? 'true' : 'false'} @click=${() => { this.preview = !this.preview; }}>
           ${this.preview ? 'Edit' : 'Preview'}
         </button>

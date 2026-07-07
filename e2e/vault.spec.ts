@@ -14,7 +14,7 @@ test.describe('vault lifecycle (US-1)', () => {
     await expectSaved(page);
     await page.reload();
     await unlockVault(page);
-    await expect(page.getByRole('button', { name: '+ New note' })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('button', { name: 'New note', exact: true })).toBeVisible({ timeout: 30_000 });
     await expectNoteListed(page, 'Persistent note');
     await page.getByRole('link', { name: 'Persistent note' }).click();
     await expect(page.locator('.cm-content')).toContainText('it must survive');
@@ -25,7 +25,7 @@ test.describe('vault lifecycle (US-1)', () => {
     await page.reload();
     await unlockVault(page, 'totally wrong password');
     await expect(page.getByRole('alert')).toContainText('Wrong password');
-    await expect(page.getByRole('button', { name: '+ New note' })).not.toBeVisible();
+    await expect(page.getByRole('button', { name: 'New note', exact: true })).not.toBeVisible();
   });
 
   test('AC-1.5: manual lock returns to the lock screen', async ({ page }) => {
@@ -80,7 +80,7 @@ test.describe('wiki-links and backlinks (US-3)', () => {
   test('AC-3.3: [[ offers autocomplete over existing titles', async ({ page }) => {
     await createVault(page);
     await newNote(page, 'Autocomplete Target', 'x');
-    await page.getByRole('button', { name: '+ New note' }).click();
+    await page.getByRole('button', { name: 'New note', exact: true }).click();
     await page.locator('.cm-content').click();
     await page.keyboard.type('link to [[Auto');
     const option = page.locator('.cm-tooltip-autocomplete li').first();
@@ -126,13 +126,13 @@ test.describe('offline PWA (US-6)', () => {
     });
     await page.reload();
     await unlockVault(page);
-    await expect(page.getByRole('button', { name: '+ New note' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'New note', exact: true })).toBeVisible();
 
     await context.setOffline(true);
     await page.reload();
     await unlockVault(page);
-    await expect(page.getByRole('button', { name: '+ New note' })).toBeVisible();
-    await page.getByRole('button', { name: '+ New note' }).click();
+    await expect(page.getByRole('button', { name: 'New note', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'New note', exact: true }).click();
     await page.locator('.cm-content').click();
     await page.keyboard.type('written offline');
     await expect(page.locator('.cm-content')).toContainText('written offline');

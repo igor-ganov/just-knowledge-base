@@ -1,4 +1,5 @@
 import { Effect } from 'effect';
+import { createFolder, folderTree, listFolders, moveNote, noteFolder, type FolderId, type FolderTree } from '@core/crdt/folders';
 import type { NoteId } from '@core/crdt/noteDoc';
 import { httpRemote } from '@core/git/remote';
 import { initRepo, setMainTo } from '@core/git/repo';
@@ -260,6 +261,34 @@ export const removeNote = (id: NoteId): void => {
   deleteNote(handle, id);
   selectedNoteStore.update((selected) => (selected === id ? undefined : selected));
 };
+
+/** Folder actions (spec folders-and-shell). */
+export const addFolder = (name: string): void => {
+  if (handle === undefined) return;
+  createFolder(handle.catalog, name);
+};
+
+export const addNoteInFolder = (folderId: FolderId | ''): NoteId | undefined => {
+  const id = addNote('');
+  if (id !== undefined && handle !== undefined && folderId !== '') moveNote(handle.catalog, id, folderId);
+  return id;
+};
+
+export const moveNoteToFolder = (id: NoteId, folderId: FolderId | ''): void => {
+  if (handle === undefined) return;
+  moveNote(handle.catalog, id, folderId);
+};
+
+const EMPTY_TREE: FolderTree = { id: '', name: '', folders: [], notes: [] };
+
+export const currentFolderTree = (): FolderTree =>
+  handle === undefined ? EMPTY_TREE : folderTree(handle.catalog, indexStore.get().snapshots);
+
+export const availableFolders = (): ReadonlyArray<{ id: FolderId; name: string }> =>
+  handle === undefined ? [] : listFolders(handle.catalog);
+
+export const folderOfNote = (id: NoteId): FolderId | '' =>
+  handle === undefined ? '' : noteFolder(handle.catalog, id);
 
 export const saveSyncSettings = async (settings: SyncSettings): Promise<void> => {
   if (handle === undefined) return;

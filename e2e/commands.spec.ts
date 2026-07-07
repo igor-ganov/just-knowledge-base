@@ -15,10 +15,10 @@ test.describe('commands, hotkeys, settings (spec commands-and-hotkeys)', () => {
   test('AC-C4.1..4.3: show-hotkeys overlay swaps labels for chips', async ({ page }) => {
     await createVault(page);
     await page.keyboard.press('Control+/');
-    const newNoteButton = page.getByRole('button', { name: /Ctrl N/u });
-    await expect(newNoteButton).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Ctrl L' })).toBeVisible();
     await page.keyboard.press('Escape');
-    await expect(page.getByRole('button', { name: '+ New note' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Lock', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Ctrl L' })).not.toBeVisible();
   });
 
   test('AC-C3.2: rebinding a command persists across reloads', async ({ page }) => {
@@ -38,7 +38,7 @@ test.describe('commands, hotkeys, settings (spec commands-and-hotkeys)', () => {
     await page.reload();
     await page.getByLabel('Master password').fill('correct horse battery');
     await page.getByRole('button', { name: 'Unlock' }).click();
-    await expect(page.getByRole('button', { name: '+ New note' })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('button', { name: 'New note', exact: true })).toBeVisible({ timeout: 30_000 });
     await page.keyboard.press('Control+Shift+9');
     await expect(page.getByLabel('Note title')).toBeVisible();
   });
