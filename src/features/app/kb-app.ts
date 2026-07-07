@@ -4,6 +4,7 @@ import { dispatchKeydown, executeCommand } from '@core/commands/commandRegistry'
 import { getCondition, setCondition, subscribeCondition } from '@core/conditions/conditions';
 import type { NoteId } from '@core/crdt/noteDoc';
 import { commandLabel } from '@ui/commandChip';
+import { identityStore } from '@features/identity/githubIdentity';
 import { KbSettingsDialog } from '@features/settings/kb-settings-dialog';
 import { initSettings } from '@features/settings/settingsService';
 import { bindConditionSources, CONDITIONS, registerAppCommands } from './commands';
@@ -14,10 +15,13 @@ import {
   addNote,
   addNoteInFolder,
   autoLockMs,
+  changeNoteSpace,
   availableFolders,
   boot,
-  currentFolderTree,
+  currentFolderTrees,
+  folderCountIn,
   folderOfNote,
+  spaceOf,
   moveNoteToFolder,
   createNewVault,
   enrollPasskeyForVault,
@@ -163,7 +167,7 @@ export class KbApp extends LitElement {
       focusSearch: () => this.focusSearch(),
       newNote: () => this.createUntitled(),
       newFolder: () => {
-        addFolder(`New folder ${availableFolders().length + 1}`);
+        addFolder(`New folder ${folderCountIn('private') + 1}`, 'private');
         this.requestUpdate();
       },
       deleteCurrentNote: () => {
@@ -195,6 +199,7 @@ export class KbApp extends LitElement {
       passkeySupportedStore.subscribe(rerender),
       passkeyEnabledStore.subscribe(rerender),
       settingsNoticeStore.subscribe(rerender),
+      identityStore.subscribe(rerender),
     ];
     globalThis.addEventListener('hashchange', this.onHashChange);
     globalThis.addEventListener('pointerdown', resetIdleTimer);
@@ -298,15 +303,23 @@ export class KbApp extends LitElement {
         @note-open=${(event: CustomEvent<{ id: string }>) => {
           globalThis.location.hash = `#/note/${event.detail.id}`;
         }}
-        @note-create-in-folder=${(event: CustomEvent<{ folderId: string }>) => {
-          const id = addNoteInFolder(event.detail.folderId);
+        @note-create-in-folder=${(event: CustomEvent<{ folderId: string; space: 'private' | 'public' }>) => {
+          const id = addNoteInFolder(event.detail.folderId, event.detail.space);
           if (id !== undefined) globalThis.location.hash = `#/note/${id}`;
         }}
         @note-move=${(event: CustomEvent<{ id: string; folderId: string }>) => {
           moveNoteToFolder(event.detail.id, event.detail.folderId);
           this.requestUpdate();
         }}
-        @folder-create=${() => void executeCommand('folder.new')}
+        @note-space=${(event: CustomEvent<{ id: string; space: 'private' | 'public' }>) => {
+          changeNoteSpace(event.detail.id, event.detail.space);
+          this.requestUpdate();
+        }}
+        @folder-create=${(event: CustomEvent<{ space?: 'private' | 'public' }>) => {
+          const space = event.detail?.space ?? 'private';
+          addFolder(`New folder ${folderCountIn(space) + 1}`, space);
+          this.requestUpdate();
+        }}
         @query-change=${(event: CustomEvent<{ query: string }>) => queryStore.set(event.detail.query)}
         @tag-toggle=${(event: CustomEvent<{ tag: string }>) =>
           tagFilterStore.update((current) => (current === event.detail.tag ? undefined : event.detail.tag))}
@@ -325,7 +338,7 @@ export class KbApp extends LitElement {
         <aside class="files" data-open=${panelOpen ? 'true' : 'false'} aria-label="Files" aria-hidden=${panelOpen ? 'false' : 'true'}>
           <kb-file-panel
             .index=${index}
-            .tree=${currentFolderTree()}
+            .tree=${currentFolderTrees()}
             .selectedId=${selected ?? ''}
             .query=${queryStore.get()}
             .tagFilter=${tagFilterStore.get() ?? ''}
@@ -333,6 +346,7 @@ export class KbApp extends LitElement {
             .syncConfigured=${settings !== undefined && settings.url !== ''}
             .saveState=${saveStateStore.get()}
             .showHotkeys=${showHotkeys}
+            .userLogin=${identityStore.get()?.login ?? ''}
           ></kb-file-panel>
         </aside>
         <main data-panel=${panelOpen ? 'true' : 'false'}>
@@ -340,8 +354,9 @@ export class KbApp extends LitElement {
             .noteId=${selected ?? ''}
             .doc=${doc}
             .index=${index}
-            .folders=${availableFolders()}
+            .folders=${selected === undefined ? [] : availableFolders(selected)}
             .folderId=${selected === undefined ? '' : folderOfNote(selected)}
+            .space=${selected === undefined ? 'private' : spaceOf(selected)}
           ></kb-editor>
         </main>
         <button class="fab fab-new" aria-label="New note" @click=${() => void executeCommand('note.new')}>

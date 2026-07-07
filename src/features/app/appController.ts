@@ -17,9 +17,12 @@ import {
   deleteNote,
   flushVault,
   loadFromDisk,
+  moveNoteToSpace,
   onVaultChange,
+  spaceOfNote,
   unlockVault,
   unlockVaultWithPasskey,
+  type SpaceName,
   type VaultHandle,
 } from '@features/vault/vaultService';
 import { createStore } from './store';
@@ -34,7 +37,8 @@ export type SyncStatus =
   | { readonly state: 'idle' | 'syncing' | 'ok' }
   | { readonly state: 'error'; readonly message: string };
 
-import { updateSettings, userSettingsStore } from '@features/settings/settingsService';
+import { connectIdentity } from '@features/identity/githubIdentity';
+import { currentUserStore, updateSettings, userSettingsStore } from '@features/settings/settingsService';
 
 const AUTOSAVE_MS = 700;
 const INDEX_REBUILD_MS = 120;
@@ -116,7 +120,9 @@ const postUnlock = async (unlocked: VaultHandle): Promise<void> => {
     scheduleAutosave();
   });
   rebuildIndex();
-  syncSettingsStore.set(await readSyncSettings(unlocked));
+  const settings = await readSyncSettings(unlocked);
+  syncSettingsStore.set(settings);
+  if (settings !== undefined && settings.token !== '') void connectIdentity(settings.token);
   unlockErrorStore.set(undefined);
   phaseStore.set('unlocked');
   resetIdleTimer();
@@ -134,12 +140,12 @@ export const createNewVault = async (password: string, withPasskey: boolean): Pr
   if (storage === undefined) return;
   const enrolled = withPasskey ? await enrollPasskey() : undefined;
   passkeyEnabledStore.set(enrolled !== undefined);
-  await postUnlock(await createVault(storage, password, undefined, enrolled));
+  await postUnlock(await createVault(storage, password, undefined, enrolled, currentUserStore.get()));
 };
 
 export const unlockWithPasskey = async (): Promise<void> => {
   if (storage === undefined) return;
-  const result = await unlockVaultWithPasskey(storage);
+  const result = await unlockVaultWithPasskey(storage, currentUserStore.get());
   switch (result.kind) {
     case 'ok':
       return postUnlock(result.handle);
@@ -200,7 +206,7 @@ export const joinExistingVault = async (settings: SyncSettings, password: string
     phaseStore.set('no-vault');
     return;
   }
-  const result = await unlockVault(storage, password);
+  const result = await unlockVault(storage, password, currentUserStore.get());
   switch (result.kind) {
     case 'ok': {
       await writeSyncSettings(result.handle, settings);
@@ -219,7 +225,7 @@ export const joinExistingVault = async (settings: SyncSettings, password: string
 
 export const unlock = async (password: string): Promise<void> => {
   if (storage === undefined) return;
-  const result = await unlockVault(storage, password);
+  const result = await unlockVault(storage, password, currentUserStore.get());
   switch (result.kind) {
     case 'ok':
       return postUnlock(result.handle);
@@ -262,38 +268,77 @@ export const removeNote = (id: NoteId): void => {
   selectedNoteStore.update((selected) => (selected === id ? undefined : selected));
 };
 
-/** Folder actions (spec folders-and-shell). */
-export const addFolder = (name: string): void => {
-  if (handle === undefined) return;
-  createFolder(handle.catalog, name);
+/** Folder actions (specs folders-and-shell, spaces). */
+const spaceCatalog = (space: SpaceName) => handle?.spaces[space].catalog;
+
+export const addFolder = (name: string, space: SpaceName = 'private'): void => {
+  const catalog = spaceCatalog(space);
+  if (catalog !== undefined) createFolder(catalog, name);
 };
 
-export const addNoteInFolder = (folderId: FolderId | ''): NoteId | undefined => {
-  const id = addNote('');
-  if (id !== undefined && handle !== undefined && folderId !== '') moveNote(handle.catalog, id, folderId);
+export const addNoteInFolder = (folderId: FolderId | '', space: SpaceName = 'private'): NoteId | undefined => {
+  if (handle === undefined) return undefined;
+  const id = createNote(handle, '', space);
+  const catalog = spaceCatalog(space);
+  if (catalog !== undefined && folderId !== '') moveNote(catalog, id, folderId);
+  selectedNoteStore.set(id);
   return id;
 };
 
 export const moveNoteToFolder = (id: NoteId, folderId: FolderId | ''): void => {
   if (handle === undefined) return;
-  moveNote(handle.catalog, id, folderId);
+  const catalog = spaceCatalog(spaceOfNote(handle, id));
+  if (catalog !== undefined) moveNote(catalog, id, folderId);
 };
 
 const EMPTY_TREE: FolderTree = { id: '', name: '', folders: [], notes: [] };
 
-export const currentFolderTree = (): FolderTree =>
-  handle === undefined ? EMPTY_TREE : folderTree(handle.catalog, indexStore.get().snapshots);
+export type SpaceTrees = Readonly<Record<SpaceName, FolderTree>>;
 
-export const availableFolders = (): ReadonlyArray<{ id: FolderId; name: string }> =>
-  handle === undefined ? [] : listFolders(handle.catalog);
+export const currentFolderTrees = (): SpaceTrees => {
+  if (handle === undefined) return { private: EMPTY_TREE, public: EMPTY_TREE };
+  const snapshots = indexStore.get().snapshots;
+  const current = handle;
+  const treeFor = (space: SpaceName): FolderTree =>
+    folderTree(
+      current.spaces[space].catalog,
+      snapshots.filter((note) => (note.space ?? 'private') === space),
+    );
+  return { private: treeFor('private'), public: treeFor('public') };
+};
 
-export const folderOfNote = (id: NoteId): FolderId | '' =>
-  handle === undefined ? '' : noteFolder(handle.catalog, id);
+export const folderCountIn = (space: SpaceName): number => {
+  const catalog = spaceCatalog(space);
+  return catalog === undefined ? 0 : listFolders(catalog).length;
+};
+
+export const availableFolders = (id: NoteId): ReadonlyArray<{ id: FolderId; name: string }> => {
+  if (handle === undefined) return [];
+  const catalog = spaceCatalog(spaceOfNote(handle, id));
+  return catalog === undefined ? [] : listFolders(catalog);
+};
+
+export const folderOfNote = (id: NoteId): FolderId | '' => {
+  if (handle === undefined) return '';
+  const catalog = spaceCatalog(spaceOfNote(handle, id));
+  return catalog === undefined ? '' : noteFolder(catalog, id);
+};
+
+export const spaceOf = (id: NoteId): SpaceName =>
+  handle === undefined ? 'private' : spaceOfNote(handle, id);
+
+export const changeNoteSpace = (id: NoteId, space: SpaceName): void => {
+  if (handle === undefined) return;
+  moveNoteToSpace(handle, id, space);
+  scheduleAutosave();
+  rebuildIndex();
+};
 
 export const saveSyncSettings = async (settings: SyncSettings): Promise<void> => {
   if (handle === undefined) return;
   await writeSyncSettings(handle, settings);
   syncSettingsStore.set(settings);
+  if (settings.token !== '') void connectIdentity(settings.token);
   scheduleAutosave();
 };
 

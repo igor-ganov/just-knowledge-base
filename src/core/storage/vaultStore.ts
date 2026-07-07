@@ -24,16 +24,33 @@ export const writeManifest = async (storage: StoragePort, manifest: VaultManifes
     utf8Encode(JSON.stringify(manifest, undefined, 2)),
   );
 
+/**
+ * Space-aware physical layout (spec spaces, AC-S1). The AAD scope stays
+ * logical ('catalog', 'notes/<id>') — physical prefixes can migrate freely.
+ * `dek === undefined` means the public space: plaintext blobs.
+ */
+export type SpacePaths = {
+  /** '' for the legacy root layout, 'public' or 'private/<login>'. */
+  readonly prefix: string;
+  /** Extra prefixes consulted on read (legacy migration, AC-S6). */
+  readonly readFallbacks: ReadonlyArray<string>;
+};
+
+const withPrefix = (prefix: string, relative: string): string =>
+  prefix === '' ? relative : joinPath(prefix, relative);
+
 const writeSealedBlob = async (
   storage: StoragePort,
-  dek: CryptoKey,
+  dek: CryptoKey | undefined,
+  paths: SpacePaths,
   scope: string,
   plaintext: Uint8Array,
 ): Promise<string> => {
-  const sealed = await sealRecord(dek, scope, plaintext);
+  const sealed = dek === undefined ? plaintext : await sealRecord(dek, scope, plaintext);
   const name = `${await sha256Hex(sealed)}.bin`;
-  await ensureDir(storage, scope === 'catalog' ? 'catalog' : scope);
-  const relative = scope === 'catalog' ? joinPath('catalog', name) : joinPath(scope, name);
+  const directory = withPrefix(paths.prefix, scope);
+  await ensureDir(storage, directory);
+  const relative = joinPath(directory, name);
   await storage.fs.promises.writeFile(joinPath(storage.dir, relative), sealed);
   return relative;
 };
@@ -47,44 +64,53 @@ export type BlobReadResult = {
 /** AC-6.5: corrupt blobs are reported and skipped, the intact remainder loads. */
 const readSealedBlobs = async (
   storage: StoragePort,
-  dek: CryptoKey,
+  dek: CryptoKey | undefined,
+  paths: SpacePaths,
   scope: string,
-  directory: string,
 ): Promise<BlobReadResult> => {
-  const names = (await listDirOrEmpty(storage, directory)).filter((name) => name.endsWith('.bin'));
   const blobs: Uint8Array[] = [];
   const corrupt: CorruptBlob[] = [];
-  for (const name of names.toSorted()) {
-    const relative = joinPath(directory, name);
-    try {
-      const sealed = await readFileOrUndefined(storage, relative);
-      if (sealed === undefined) continue;
-      blobs.push(await openRecord(dek, scope, sealed));
-    } catch (error) {
-      corrupt.push({ path: relative, reason: error instanceof Error ? error.message : 'unreadable' });
+  for (const prefix of [paths.prefix, ...paths.readFallbacks]) {
+    const directory = withPrefix(prefix, scope);
+    const names = (await listDirOrEmpty(storage, directory)).filter((name) => name.endsWith('.bin'));
+    for (const name of names.toSorted()) {
+      const relative = joinPath(directory, name);
+      try {
+        const sealed = await readFileOrUndefined(storage, relative);
+        if (sealed === undefined) continue;
+        blobs.push(dek === undefined ? sealed : await openRecord(dek, scope, sealed));
+      } catch (error) {
+        corrupt.push({ path: relative, reason: error instanceof Error ? error.message : 'unreadable' });
+      }
     }
   }
   return { blobs, corrupt };
 };
 
-export const writeCatalogBlob = (storage: StoragePort, dek: CryptoKey, blob: Uint8Array): Promise<string> =>
-  writeSealedBlob(storage, dek, 'catalog', blob);
+export const writeCatalogBlob = (
+  storage: StoragePort,
+  dek: CryptoKey | undefined,
+  paths: SpacePaths,
+  blob: Uint8Array,
+): Promise<string> => writeSealedBlob(storage, dek, paths, 'catalog', blob);
 
-export const readCatalogBlobs = (storage: StoragePort, dek: CryptoKey): Promise<BlobReadResult> =>
-  readSealedBlobs(storage, dek, 'catalog', 'catalog');
+export const readCatalogBlobs = (
+  storage: StoragePort,
+  dek: CryptoKey | undefined,
+  paths: SpacePaths,
+): Promise<BlobReadResult> => readSealedBlobs(storage, dek, paths, 'catalog');
 
 export const writeNoteBlob = (
   storage: StoragePort,
-  dek: CryptoKey,
+  dek: CryptoKey | undefined,
+  paths: SpacePaths,
   noteId: string,
   blob: Uint8Array,
-): Promise<string> => writeSealedBlob(storage, dek, `notes/${noteId}`, blob);
+): Promise<string> => writeSealedBlob(storage, dek, paths, `notes/${noteId}`, blob);
 
 export const readNoteBlobs = (
   storage: StoragePort,
-  dek: CryptoKey,
+  dek: CryptoKey | undefined,
+  paths: SpacePaths,
   noteId: string,
-): Promise<BlobReadResult> => readSealedBlobs(storage, dek, `notes/${noteId}`, `notes/${noteId}`);
-
-export const listStoredNoteIds = (storage: StoragePort): Promise<ReadonlyArray<string>> =>
-  listDirOrEmpty(storage, 'notes');
+): Promise<BlobReadResult> => readSealedBlobs(storage, dek, paths, `notes/${noteId}`);

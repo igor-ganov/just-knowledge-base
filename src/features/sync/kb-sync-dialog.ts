@@ -1,5 +1,8 @@
 import { css, html, LitElement, nothing } from 'lit';
+import { pollDeviceFlow, startDeviceFlow, type DeviceFlowStart } from '@features/identity/githubIdentity';
 import { defaultCorsProxy, type SyncSettings } from './syncConfig';
+
+const CLIENT_ID_KEY = 'jkb-github-client-id';
 
 /**
  * Sync settings dialog (AC-7.1): remote URL, access token, CORS proxy, and the
@@ -12,6 +15,8 @@ export class KbSyncDialog extends LitElement {
     passkeySupported: { type: Boolean },
     passkeyEnabled: { type: Boolean },
     notice: { type: String },
+    deviceFlow: { attribute: false, state: true },
+    deviceFlowStatus: { type: String, state: true },
   };
 
   declare settings: SyncSettings | undefined;
@@ -19,6 +24,10 @@ export class KbSyncDialog extends LitElement {
   declare passkeySupported: boolean;
   declare passkeyEnabled: boolean;
   declare notice: string;
+  declare deviceFlow: DeviceFlowStart | undefined;
+  declare deviceFlowStatus: string;
+
+  private deviceFlowActive = false;
 
   constructor() {
     super();
@@ -26,6 +35,52 @@ export class KbSyncDialog extends LitElement {
     this.passkeySupported = false;
     this.passkeyEnabled = false;
     this.notice = '';
+    this.deviceFlowStatus = '';
+  }
+
+  private async runDeviceFlow(): Promise<void> {
+    const root = this.renderRoot;
+    const clientInput = root.querySelector('input[name="ghClientId"]');
+    const proxyInput = root.querySelector('input[name="proxy"]');
+    const clientId = clientInput instanceof HTMLInputElement ? clientInput.value.trim() : '';
+    const proxy = proxyInput instanceof HTMLInputElement ? proxyInput.value.trim() : defaultCorsProxy;
+    if (clientId === '') {
+      this.deviceFlowStatus = 'Enter your GitHub OAuth app client id first.';
+      return;
+    }
+    globalThis.localStorage?.setItem(CLIENT_ID_KEY, clientId);
+    this.deviceFlowStatus = 'Requesting device code…';
+    const start = await startDeviceFlow(clientId, proxy);
+    if (start === undefined) {
+      this.deviceFlowStatus = 'Could not reach GitHub (check the CORS proxy and client id).';
+      return;
+    }
+    this.deviceFlow = start;
+    this.deviceFlowStatus = 'Waiting for authorization…';
+    this.deviceFlowActive = true;
+    const poll = async (): Promise<void> => {
+      if (!this.deviceFlowActive) return;
+      const result = await pollDeviceFlow(clientId, start.deviceCode, proxy);
+      switch (result.kind) {
+        case 'token': {
+          const tokenInput = root.querySelector('input[name="token"]');
+          if (tokenInput instanceof HTMLInputElement) tokenInput.value = result.token;
+          this.deviceFlow = undefined;
+          this.deviceFlowActive = false;
+          this.deviceFlowStatus = 'Signed in — token filled below, press Save.';
+          return;
+        }
+        case 'pending':
+          setTimeout(() => void poll(), (start.intervalSeconds + 1) * 1000);
+          return;
+        case 'failed':
+          this.deviceFlow = undefined;
+          this.deviceFlowActive = false;
+          this.deviceFlowStatus = `Sign-in failed: ${result.reason}`;
+          return;
+      }
+    };
+    setTimeout(() => void poll(), start.intervalSeconds * 1000);
   }
 
   static override styles = css`
@@ -135,6 +190,28 @@ export class KbSyncDialog extends LitElement {
             Access token
             <input name="token" type="password" autocomplete="off" .value=${this.settings?.token ?? ''} />
           </label>
+          <details>
+            <summary>Sign in with GitHub instead (device flow)</summary>
+            <label>
+              OAuth app client id
+              <input
+                name="ghClientId"
+                type="text"
+                autocomplete="off"
+                .value=${globalThis.localStorage?.getItem(CLIENT_ID_KEY) ?? ''}
+              />
+            </label>
+            <button type="button" @click=${() => void this.runDeviceFlow()}>Sign in with GitHub</button>
+            ${this.deviceFlow === undefined
+              ? nothing
+              : html`<p class="hint">
+                  Enter code <strong>${this.deviceFlow.userCode}</strong> at
+                  <a href=${this.deviceFlow.verificationUri} target="_blank" rel="noopener noreferrer"
+                    >${this.deviceFlow.verificationUri}</a
+                  >
+                </p>`}
+            <p class="hint">${this.deviceFlowStatus}</p>
+          </details>
           <label>
             CORS proxy
             <input name="proxy" type="url" .value=${this.settings?.corsProxy ?? defaultCorsProxy} />

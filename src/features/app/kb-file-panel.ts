@@ -4,7 +4,7 @@ import type { NoteSnapshot } from '@core/crdt/noteDoc';
 import type { FolderTree } from '@core/crdt/folders';
 import { searchNotes, type KnowledgeIndex } from '@features/search/indexes';
 import { commandLabel } from '@ui/commandChip';
-import type { SyncStatus } from './appController';
+import type { SpaceTrees, SyncStatus } from './appController';
 
 /**
  * File panel (spec folders-and-shell, AC-F2.2): search, folder tree with
@@ -21,10 +21,11 @@ export class KbFilePanel extends LitElement {
     syncConfigured: { type: Boolean },
     saveState: { type: String },
     showHotkeys: { type: Boolean },
+    userLogin: { type: String },
   };
 
   declare index: KnowledgeIndex;
-  declare tree: FolderTree;
+  declare tree: SpaceTrees;
   declare selectedId: string;
   declare query: string;
   declare tagFilter: string;
@@ -32,10 +33,12 @@ export class KbFilePanel extends LitElement {
   declare syncConfigured: boolean;
   declare saveState: 'saved' | 'dirty' | 'saving';
   declare showHotkeys: boolean;
+  declare userLogin: string;
 
   constructor() {
     super();
-    this.tree = { id: '', name: '', folders: [], notes: [] };
+    const empty: FolderTree = { id: '', name: '', folders: [], notes: [] };
+    this.tree = { private: empty, public: empty };
     this.selectedId = '';
     this.query = '';
     this.tagFilter = '';
@@ -43,6 +46,7 @@ export class KbFilePanel extends LitElement {
     this.syncConfigured = false;
     this.saveState = 'saved';
     this.showHotkeys = false;
+    this.userLogin = '';
   }
 
   static override styles = css`
@@ -215,7 +219,7 @@ export class KbFilePanel extends LitElement {
     </li>`;
   }
 
-  private folderNode(folder: FolderTree): unknown {
+  private folderNode(folder: FolderTree, space: 'private' | 'public'): unknown {
     return html`<details open>
       <summary>
         📁 ${folder.name}
@@ -225,15 +229,38 @@ export class KbFilePanel extends LitElement {
           title="New note here"
           @click=${(event: Event) => {
             event.preventDefault();
-            this.emit('note-create-in-folder', { folderId: folder.id });
+            this.emit('note-create-in-folder', { folderId: folder.id, space });
           }}
         >
           ＋
         </button>
       </summary>
-      ${folder.folders.map((child) => this.folderNode(child))}
+      ${folder.folders.map((child) => this.folderNode(child, space))}
       <ul>
         ${folder.notes.map((note) => this.noteRow(note))}
+      </ul>
+    </details>`;
+  }
+
+  private spaceSection(space: 'private' | 'public', tree: FolderTree): unknown {
+    return html`<details open class="space">
+      <summary>
+        ${space === 'private' ? '🔒 Private' : '🌐 Public'}
+        <button
+          class="folder-add"
+          aria-label=${`New folder in ${space} space`}
+          title="New folder"
+          @click=${(event: Event) => {
+            event.preventDefault();
+            this.emit('folder-create', { space });
+          }}
+        >
+          ＋📁
+        </button>
+      </summary>
+      ${tree.folders.map((folder) => this.folderNode(folder, space))}
+      <ul>
+        ${tree.notes.map((note) => this.noteRow(note))}
       </ul>
     </details>`;
   }
@@ -267,16 +294,14 @@ export class KbFilePanel extends LitElement {
         />
       </div>
       <div class="actions">
-        <button @click=${() => this.emit('folder-create', {})}>＋ Folder</button>
+        <button @click=${() => this.emit('folder-create', { space: 'private' })}>＋ Folder</button>
         <button @click=${() => void executeCommand('vault.lock')}>
           ${commandLabel('vault.lock', 'Lock', this.showHotkeys)}
         </button>
       </div>
-      <nav aria-label="Notes">${filtering ? this.filteredList() : html`
-        ${this.tree.folders.map((folder) => this.folderNode(folder))}
-        <ul>
-          ${this.tree.notes.map((note) => this.noteRow(note))}
-        </ul>`}
+      <nav aria-label="Notes">${filtering
+        ? this.filteredList()
+        : html`${this.spaceSection('private', this.tree.private)} ${this.spaceSection('public', this.tree.public)}`}
       </nav>
       <section aria-label="Tags">
         <h2>Tags</h2>
@@ -296,6 +321,7 @@ export class KbFilePanel extends LitElement {
       </section>
       <footer>
         <span class="sync-state" aria-live="polite">
+          ${this.userLogin === '' ? nothing : html`@${this.userLogin} · `}
           <span title=${this.syncStatus.state === 'error' ? this.syncStatus.message : ''}>${this.syncLabel()}</span>
           · ${this.saveLabel()}
         </span>

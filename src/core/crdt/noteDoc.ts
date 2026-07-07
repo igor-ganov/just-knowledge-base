@@ -6,6 +6,8 @@ export type NoteSnapshot = {
   readonly id: NoteId;
   readonly title: string;
   readonly body: string;
+  /** Which vault space the note lives in (spec spaces); absent = private. */
+  readonly space?: 'private' | 'public';
 };
 
 export const newNoteId = (): NoteId => crypto.randomUUID();

@@ -18,6 +18,7 @@ export class KbEditor extends LitElement {
     index: { attribute: false },
     folders: { attribute: false },
     folderId: { type: String },
+    space: { type: String },
     sourceMode: { type: Boolean, state: true },
   };
 
@@ -26,6 +27,7 @@ export class KbEditor extends LitElement {
   declare index: KnowledgeIndex;
   declare folders: ReadonlyArray<{ readonly id: string; readonly name: string }>;
   declare folderId: string;
+  declare space: 'private' | 'public';
   declare sourceMode: boolean;
 
   private binding: EditorBinding | undefined;
@@ -37,6 +39,7 @@ export class KbEditor extends LitElement {
     this.sourceMode = false;
     this.folders = [];
     this.folderId = '';
+    this.space = 'private';
   }
 
   static override styles = css`
@@ -267,6 +270,17 @@ export class KbEditor extends LitElement {
           .value=${noteTitle(doc).toString()}
           @input=${this.onTitleInput}
         />
+        <select
+          aria-label="Note space"
+          .value=${this.space}
+          @change=${(event: Event) => {
+            const value = event.target instanceof HTMLSelectElement ? event.target.value : 'private';
+            this.emit('note-space', { id: this.noteId, space: value });
+          }}
+        >
+          <option value="private" ?selected=${this.space === 'private'}>🔒 Private</option>
+          <option value="public" ?selected=${this.space === 'public'}>🌐 Public</option>
+        </select>
         <select
           aria-label="Move to folder"
           .value=${this.folderId}
