@@ -10,12 +10,16 @@ export class KbLockScreen extends LitElement {
     error: { type: String },
     busy: { type: Boolean },
     joining: { type: Boolean, state: true },
+    passkeySupported: { type: Boolean },
+    passkeyEnabled: { type: Boolean },
   };
 
   declare mode: 'create' | 'unlock';
   declare error: string;
   declare busy: boolean;
   declare joining: boolean;
+  declare passkeySupported: boolean;
+  declare passkeyEnabled: boolean;
 
   constructor() {
     super();
@@ -23,6 +27,8 @@ export class KbLockScreen extends LitElement {
     this.error = '';
     this.busy = false;
     this.joining = false;
+    this.passkeySupported = false;
+    this.passkeyEnabled = false;
   }
 
   static override styles = css`
@@ -93,6 +99,21 @@ export class KbLockScreen extends LitElement {
       text-decoration: underline;
       padding: 0;
     }
+    button.passkey {
+      background: var(--color-accent);
+      font-size: 1.05rem;
+    }
+    p.divider {
+      margin: 0;
+      text-align: center;
+      color: var(--color-text-muted);
+      font-size: 0.8rem;
+    }
+    label.checkbox {
+      flex-direction: row;
+      align-items: center;
+      gap: var(--space-2);
+    }
     [role='alert'] {
       color: var(--color-danger);
       font-size: 0.9rem;
@@ -131,7 +152,11 @@ export class KbLockScreen extends LitElement {
           this.error = 'Passwords do not match.';
           return;
         }
-        this.dispatchEvent(new CustomEvent('vault-create', { detail: { password } }));
+        this.dispatchEvent(
+          new CustomEvent('vault-create', {
+            detail: { password, withPasskey: data.get('passkey') === 'on' },
+          }),
+        );
         return;
       }
       case 'unlock':
@@ -164,9 +189,23 @@ export class KbLockScreen extends LitElement {
       : creating
         ? 'Create your vault'
         : 'Unlock your vault';
+    const showPasskeyUnlock = this.mode === 'unlock' && this.passkeyEnabled && this.passkeySupported;
     return html`
       <form @submit=${this.submit} aria-busy=${this.busy}>
         <h1>${heading}</h1>
+        ${showPasskeyUnlock
+          ? html`
+              <button
+                type="button"
+                class="passkey"
+                ?disabled=${this.busy}
+                @click=${() => this.dispatchEvent(new CustomEvent('vault-unlock-passkey'))}
+              >
+                🔑 Unlock with passkey
+              </button>
+              <p class="divider" role="separator">or use your master password</p>
+            `
+          : nothing}
         ${this.joining ? this.renderJoinFields() : nothing}
         <p class="hint">
           ${creating
@@ -193,6 +232,12 @@ export class KbLockScreen extends LitElement {
           ? html`<label>
               Repeat password
               <input name="confirm" type="password" autocomplete="new-password" required />
+            </label>`
+          : nothing}
+        ${creating && this.passkeySupported
+          ? html`<label class="checkbox">
+              <input name="passkey" type="checkbox" checked />
+              Enable passkey unlock (recommended) — the password stays as a fallback
             </label>`
           : nothing}
         <p role="alert">${this.error}</p>

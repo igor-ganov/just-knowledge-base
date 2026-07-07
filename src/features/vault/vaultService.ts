@@ -9,7 +9,16 @@ import {
   type NoteId,
   type NoteSnapshot,
 } from '@core/crdt/noteDoc';
-import { createDek, defaultKdfParams, deriveKek, unwrapDek, type KdfParams, type VaultManifest } from '@core/crypto/keys';
+import {
+  defaultKdfParams,
+  deriveKek,
+  generateWrappableDek,
+  unwrapDek,
+  wrapDek,
+  type KdfParams,
+  type VaultManifest,
+} from '@core/crypto/keys';
+import { passkeyKek, type EnrolledPasskey } from '@core/crypto/passkey';
 import { commitAll, initRepo } from '@core/git/repo';
 import { persistStorage, type StoragePort } from '@core/storage/ports';
 import {
@@ -87,20 +96,83 @@ export const createVault = async (
   storage: StoragePort,
   password: string,
   kdfParams: KdfParams = defaultKdfParams(),
+  passkey?: EnrolledPasskey,
 ): Promise<VaultHandle> => {
   await initRepo(storage);
   const kek = await deriveKek(password, kdfParams);
-  const { dek, wrappedDekB64 } = await createDek(kek);
+  const wrappable = await generateWrappableDek();
+  const wrappedDekB64 = await wrapDek(kek, wrappable);
   const manifest: VaultManifest = {
     formatVersion: 1,
     kdf: kdfParams,
     wrappedDekB64,
     createdAt: new Date().toISOString(),
+    ...(passkey === undefined
+      ? {}
+      : {
+          passkey: {
+            credentialIdB64: passkey.credentialIdB64,
+            prfSaltB64: passkey.prfSaltB64,
+            wrappedDekB64: await wrapDek(passkey.kek, wrappable),
+          },
+        }),
   };
   await writeManifest(storage, manifest);
   await commitAll(storage, 'vault: create');
   await persistStorage(storage);
+  const dek = await unwrapDek(kek, wrappedDekB64);
   return emptyHandle(storage, dek);
+};
+
+/** Unlock via the passkey protector (AC-1.0/1.0a). */
+export const unlockVaultWithPasskey = async (
+  storage: StoragePort,
+): Promise<UnlockResult | { readonly kind: 'passkey-failed' }> => {
+  const manifest = await readManifest(storage);
+  if (manifest === undefined) return { kind: 'no-vault' };
+  if (manifest.passkey === undefined) return { kind: 'passkey-failed' };
+  const kek = await passkeyKek(manifest.passkey);
+  if (kek === undefined) return { kind: 'passkey-failed' };
+  try {
+    const dek = await unwrapDek(kek, manifest.passkey.wrappedDekB64);
+    const handle = emptyHandle(storage, dek);
+    await loadFromDisk(handle);
+    return { kind: 'ok', handle };
+  } catch {
+    return { kind: 'passkey-failed' };
+  }
+};
+
+/**
+ * Enroll a passkey on an existing vault (AC-1.0c): the password unwraps a
+ * transient extractable DEK handle, which is immediately re-wrapped under the
+ * passkey KEK. Raw key bytes never surface to JS.
+ */
+export const addPasskeyProtector = async (
+  storage: StoragePort,
+  password: string,
+  passkey: EnrolledPasskey,
+): Promise<'ok' | 'wrong-password' | 'no-vault'> => {
+  const manifest = await readManifest(storage);
+  if (manifest === undefined) return 'no-vault';
+  const kek = await deriveKek(password, manifest.kdf);
+  try {
+    const wrappable = await unwrapDek(kek, manifest.wrappedDekB64, true);
+    const updated: VaultManifest = {
+      ...manifest,
+      passkey: {
+        credentialIdB64: passkey.credentialIdB64,
+        prfSaltB64: passkey.prfSaltB64,
+        wrappedDekB64: await wrapDek(passkey.kek, wrappable),
+      },
+    };
+    await writeManifest(storage, updated);
+    await commitAll(storage, 'vault: add passkey protector');
+    await persistStorage(storage);
+    return 'ok';
+  } catch {
+    return 'wrong-password';
+  }
 };
 
 /** Idempotently fold every on-disk blob into the live docs (post-unlock, post-sync). */

@@ -9,11 +9,23 @@ export type KdfParams = {
   readonly parallelism: number;
 };
 
+export type PasskeyProtectorRecord = {
+  readonly credentialIdB64: string;
+  readonly prfSaltB64: string;
+  readonly wrappedDekB64: string;
+};
+
+/**
+ * Protector model (design §2.3): the password protector (kdf + wrappedDekB64)
+ * always exists; the optional passkey protector wraps the same DEK under a
+ * PRF-derived KEK. Additive and optional — v1 vaults stay readable.
+ */
 export type VaultManifest = {
   readonly formatVersion: 1;
   readonly kdf: KdfParams;
   readonly wrappedDekB64: string;
   readonly createdAt: string;
+  readonly passkey?: PasskeyProtectorRecord;
 };
 
 /**
@@ -53,28 +65,41 @@ export type CreatedVaultKeys = {
   readonly wrappedDekB64: string;
 };
 
-/** Fresh random DEK, wrapped by the KEK. The usable handle is non-extractable. */
-export const createDek = async (kek: CryptoKey): Promise<CreatedVaultKeys> => {
-  const wrappable = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, [
-    'encrypt',
-    'decrypt',
-  ]);
+/** Fresh extractable DEK — exists only while protectors are being written. */
+export const generateWrappableDek = (): Promise<CryptoKey> =>
+  crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+
+/** Wrap a DEK under a protector's KEK; raw bytes never surface to JS. */
+export const wrapDek = async (kek: CryptoKey, wrappableDek: CryptoKey): Promise<string> => {
   const nonce = randomBytes(NONCE_LENGTH);
-  const wrapped = await crypto.subtle.wrapKey('raw', wrappable, kek, {
+  const wrapped = await crypto.subtle.wrapKey('raw', wrappableDek, kek, {
     name: 'AES-GCM',
     iv: exactBuffer(nonce),
     additionalData: exactBuffer(DEK_AAD),
   });
-  const wrappedDekB64 = toBase64(concatBytes(nonce, new Uint8Array(wrapped)));
+  return toBase64(concatBytes(nonce, new Uint8Array(wrapped)));
+};
+
+/** Fresh random DEK, wrapped by the KEK. The usable handle is non-extractable. */
+export const createDek = async (kek: CryptoKey): Promise<CreatedVaultKeys> => {
+  const wrappable = await generateWrappableDek();
+  const wrappedDekB64 = await wrapDek(kek, wrappable);
   const dek = await unwrapDek(kek, wrappedDekB64);
   return { dek, wrappedDekB64 };
 };
 
 /**
- * Unwrap the DEK as a NON-extractable key. A wrong password produces a KEK
- * that fails GCM authentication here — the single, uniform failure point (AC-1.3).
+ * Unwrap the DEK — NON-extractable by default. A wrong password / failed
+ * ceremony produces a KEK that fails GCM authentication here — the single,
+ * uniform failure point (AC-1.3). `extractable` is used only transiently when
+ * re-wrapping the DEK under a new protector (passkey enrollment, password
+ * change); the raw bytes still never surface to JS.
  */
-export const unwrapDek = async (kek: CryptoKey, wrappedDekB64: string): Promise<CryptoKey> => {
+export const unwrapDek = async (
+  kek: CryptoKey,
+  wrappedDekB64: string,
+  extractable = false,
+): Promise<CryptoKey> => {
   const sealed = fromBase64(wrappedDekB64);
   const nonce = sealed.subarray(0, NONCE_LENGTH);
   const wrapped = sealed.subarray(NONCE_LENGTH);
@@ -84,7 +109,7 @@ export const unwrapDek = async (kek: CryptoKey, wrappedDekB64: string): Promise<
     kek,
     { name: 'AES-GCM', iv: exactBuffer(nonce), additionalData: exactBuffer(DEK_AAD) },
     { name: 'AES-GCM' },
-    false,
+    extractable,
     ['encrypt', 'decrypt'],
   );
 };

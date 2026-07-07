@@ -7,8 +7,10 @@ import { persistStorage, type StoragePort } from '@core/storage/ports';
 import { readManifest } from '@core/storage/vaultStore';
 import { buildIndex, emptyIndex, type KnowledgeIndex } from '@features/search/indexes';
 import { readSyncSettings, writeSyncSettings, type SyncSettings } from '@features/sync/syncConfig';
+import { enrollPasskey, passkeySupported } from '@core/crypto/passkey';
 import {
   activeNotes,
+  addPasskeyProtector,
   createNote,
   createVault,
   deleteNote,
@@ -16,6 +18,7 @@ import {
   loadFromDisk,
   onVaultChange,
   unlockVault,
+  unlockVaultWithPasskey,
   type VaultHandle,
 } from '@features/vault/vaultService';
 import { createStore } from './store';
@@ -45,6 +48,11 @@ export const syncSettingsStore = createStore<SyncSettings | undefined>(undefined
 export const unlockErrorStore = createStore<string | undefined>(undefined);
 export type SaveState = 'saved' | 'dirty' | 'saving';
 export const saveStateStore = createStore<SaveState>('saved');
+/** Platform can do WebAuthn+PRF at all (AC-1.0b). */
+export const passkeySupportedStore = createStore<boolean>(false);
+/** The current vault has a passkey protector enrolled (AC-1.0). */
+export const passkeyEnabledStore = createStore<boolean>(false);
+export const settingsNoticeStore = createStore<string | undefined>(undefined);
 
 let storage: StoragePort | undefined;
 let handle: VaultHandle | undefined;
@@ -118,13 +126,56 @@ const postUnlock = async (unlocked: VaultHandle): Promise<void> => {
 
 export const boot = async (): Promise<void> => {
   storage = createWebStorage();
+  passkeySupportedStore.set(await passkeySupported());
   const manifest = await readManifest(storage).catch(() => undefined);
+  passkeyEnabledStore.set(manifest?.passkey !== undefined);
   phaseStore.set(manifest === undefined ? 'no-vault' : 'locked');
 };
 
-export const createNewVault = async (password: string): Promise<void> => {
+export const createNewVault = async (password: string, withPasskey: boolean): Promise<void> => {
   if (storage === undefined) return;
-  await postUnlock(await createVault(storage, password));
+  const enrolled = withPasskey ? await enrollPasskey() : undefined;
+  passkeyEnabledStore.set(enrolled !== undefined);
+  await postUnlock(await createVault(storage, password, undefined, enrolled));
+};
+
+export const unlockWithPasskey = async (): Promise<void> => {
+  if (storage === undefined) return;
+  const result = await unlockVaultWithPasskey(storage);
+  switch (result.kind) {
+    case 'ok':
+      return postUnlock(result.handle);
+    case 'passkey-failed':
+      unlockErrorStore.set('Passkey unlock failed or was cancelled — use your master password.');
+      return;
+    case 'wrong-password':
+    case 'no-vault':
+      phaseStore.set('no-vault');
+      return;
+  }
+};
+
+/** Enroll a passkey on an existing vault from settings (AC-1.0c). */
+export const enrollPasskeyForVault = async (password: string): Promise<void> => {
+  if (storage === undefined) return;
+  const enrolled = await enrollPasskey();
+  if (enrolled === undefined) {
+    settingsNoticeStore.set('Passkey creation was cancelled or is not supported here.');
+    return;
+  }
+  const result = await addPasskeyProtector(storage, password, enrolled);
+  switch (result) {
+    case 'ok':
+      passkeyEnabledStore.set(true);
+      settingsNoticeStore.set('Passkey enabled — you can unlock without the password now.');
+      return;
+    case 'wrong-password':
+      settingsNoticeStore.set('Wrong master password — passkey not enabled.');
+      return;
+    case 'no-vault':
+      settingsNoticeStore.set('No vault found.');
+      return;
+  }
 };
 
 /**

@@ -1,4 +1,4 @@
-import { css, html, LitElement } from 'lit';
+import { css, html, LitElement, nothing } from 'lit';
 import { defaultCorsProxy, type SyncSettings } from './syncConfig';
 
 /**
@@ -9,10 +9,24 @@ export class KbSyncDialog extends LitElement {
   static override properties = {
     settings: { attribute: false },
     autoLockMinutes: { type: Number },
+    passkeySupported: { type: Boolean },
+    passkeyEnabled: { type: Boolean },
+    notice: { type: String },
   };
 
   declare settings: SyncSettings | undefined;
   declare autoLockMinutes: number;
+  declare passkeySupported: boolean;
+  declare passkeyEnabled: boolean;
+  declare notice: string;
+
+  constructor() {
+    super();
+    this.autoLockMinutes = 15;
+    this.passkeySupported = false;
+    this.passkeyEnabled = false;
+    this.notice = '';
+  }
 
   static override styles = css`
     dialog {
@@ -130,6 +144,32 @@ export class KbSyncDialog extends LitElement {
             Auto-lock after inactivity (minutes)
             <input name="autolock" type="number" min="1" max="240" .value=${String(this.autoLockMinutes)} />
           </label>
+          ${this.passkeySupported && !this.passkeyEnabled
+            ? html`
+                <label>
+                  Master password (to enable passkey unlock)
+                  <input name="enrollPassword" type="password" autocomplete="current-password" />
+                </label>
+                <button
+                  type="button"
+                  @click=${(event: Event) => {
+                    const root =
+                      event.currentTarget instanceof HTMLElement
+                        ? (event.currentTarget.closest('form') ?? undefined)
+                        : undefined;
+                    const input = root?.querySelector('input[name="enrollPassword"]');
+                    const password = input instanceof HTMLInputElement ? input.value : '';
+                    this.dispatchEvent(
+                      new CustomEvent('passkey-enroll', { detail: { password }, bubbles: true, composed: true }),
+                    );
+                  }}
+                >
+                  🔑 Enable passkey unlock
+                </button>
+              `
+            : nothing}
+          ${this.passkeyEnabled ? html`<p class="hint">Passkey unlock is enabled for this vault.</p>` : nothing}
+          <p class="hint" role="status">${this.notice}</p>
           <div class="row">
             <button type="button" @click=${this.close}>Cancel</button>
             <button type="submit" class="primary">Save</button>

@@ -5,6 +5,8 @@ export const PASSWORD = 'correct horse battery';
 export const createVault = async (page: Page): Promise<void> => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Create your vault' })).toBeVisible();
+  const passkeyOptIn = page.getByRole('checkbox', { name: /passkey/iu });
+  if ((await passkeyOptIn.count()) > 0) await passkeyOptIn.uncheck();
   await page.getByLabel('Master password').fill(PASSWORD);
   await page.getByLabel('Repeat password').fill(PASSWORD);
   await page.getByRole('button', { name: 'Create vault' }).click();

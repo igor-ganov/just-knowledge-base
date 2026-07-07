@@ -8,10 +8,14 @@ import {
   autoLockMs,
   boot,
   createNewVault,
+  enrollPasskeyForVault,
   indexStore,
   joinExistingVault,
   lock,
+  passkeyEnabledStore,
+  passkeySupportedStore,
   phaseStore,
+  settingsNoticeStore,
   queryStore,
   removeNote,
   resetIdleTimer,
@@ -25,6 +29,7 @@ import {
   tagFilterStore,
   unlock,
   unlockErrorStore,
+  unlockWithPasskey,
   vaultHandle,
   type Phase,
   type SyncStatus,
@@ -105,6 +110,9 @@ export class KbApp extends LitElement {
       syncSettingsStore.subscribe(rerender),
       unlockErrorStore.subscribe(rerender),
       saveStateStore.subscribe(rerender),
+      passkeySupportedStore.subscribe(rerender),
+      passkeyEnabledStore.subscribe(rerender),
+      settingsNoticeStore.subscribe(rerender),
     ];
     globalThis.addEventListener('hashchange', this.onHashChange);
     globalThis.addEventListener('pointerdown', resetIdleTimer);
@@ -165,9 +173,17 @@ export class KbApp extends LitElement {
     if (id !== undefined) globalThis.location.hash = `#/note/${id}`;
   }
 
-  private async handleCreate(event: CustomEvent<{ password: string }>): Promise<void> {
+  private async handleCreate(
+    event: CustomEvent<{ password: string; withPasskey: boolean }>,
+  ): Promise<void> {
     this.busy = true;
-    await createNewVault(event.detail.password);
+    await createNewVault(event.detail.password, event.detail.withPasskey);
+  }
+
+  private async handlePasskeyUnlock(): Promise<void> {
+    this.busy = true;
+    await unlockWithPasskey();
+    this.busy = false;
   }
 
   private async handleUnlock(event: CustomEvent<{ password: string }>): Promise<void> {
@@ -213,6 +229,8 @@ export class KbApp extends LitElement {
         @sync-now=${() => void syncNow()}
         @sync-open-settings=${() => this.openSyncDialog()}
         @sync-save=${this.handleSyncSave}
+        @passkey-enroll=${(event: CustomEvent<{ password: string }>) =>
+          void enrollPasskeyForVault(event.detail.password)}
       >
         <kb-sidebar
           .index=${index}
@@ -226,7 +244,13 @@ export class KbApp extends LitElement {
         <main>
           <kb-editor .noteId=${selected ?? ''} .doc=${doc} .index=${index}></kb-editor>
         </main>
-        <kb-sync-dialog .settings=${settings} .autoLockMinutes=${Math.round(autoLockMs() / 60000)}></kb-sync-dialog>
+        <kb-sync-dialog
+          .settings=${settings}
+          .autoLockMinutes=${Math.round(autoLockMs() / 60000)}
+          .passkeySupported=${passkeySupportedStore.get()}
+          .passkeyEnabled=${passkeyEnabledStore.get()}
+          .notice=${settingsNoticeStore.get() ?? ''}
+        ></kb-sync-dialog>
       </div>
     `;
   }
@@ -245,6 +269,7 @@ export class KbApp extends LitElement {
           mode="create"
           ?busy=${this.busy}
           .error=${unlockErrorStore.get() ?? ''}
+          .passkeySupported=${passkeySupportedStore.get()}
           @vault-create=${this.handleCreate}
           @vault-join=${this.handleJoin}
         ></kb-lock-screen>`;
@@ -253,7 +278,10 @@ export class KbApp extends LitElement {
           mode="unlock"
           ?busy=${this.busy}
           .error=${unlockErrorStore.get() ?? ''}
+          .passkeySupported=${passkeySupportedStore.get()}
+          .passkeyEnabled=${passkeyEnabledStore.get()}
           @vault-unlock=${this.handleUnlock}
+          @vault-unlock-passkey=${this.handlePasskeyUnlock}
         ></kb-lock-screen>`;
       case 'unlocked':
         return this.renderWorkspace(indexStore.get(), selectedNoteStore.get());
