@@ -3,6 +3,8 @@ import { expect, test } from '@playwright/test';
 test('production: vault creation and note editing work end-to-end', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Create your vault' })).toBeVisible();
+  const passkeyOptIn = page.getByRole('checkbox', { name: /passkey/iu });
+  if ((await passkeyOptIn.count()) > 0) await passkeyOptIn.uncheck();
   await page.getByLabel('Master password').fill('prod smoke passphrase');
   await page.getByLabel('Repeat password').fill('prod smoke passphrase');
   await page.getByRole('button', { name: 'Create vault' }).click();
